@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true
+  },
+  "include": ["src/*.ts"],
+  "references": [
+    { "path": "../../vendor/cordis" },
+    { "path": "../../packages/core/session" },
+    { "path": "../../packages/host/webserver" }
+  ]
+}
