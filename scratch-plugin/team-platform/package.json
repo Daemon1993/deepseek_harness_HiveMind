@@ -14,6 +14,7 @@
   "files": [
     "lib",
     "admin.html",
+    "login.html",
     "cordis.patch.yml"
   ],
   "dsh": {
@@ -30,8 +31,8 @@
     }
   },
   "scripts": {
-    "build:host": "tsdown --no-config src/index.ts --format esm --platform node --out-dir lib",
-    "build:client": "tsdown --config tsdown.client.config.ts && tsdown --config tsdown.admin.config.ts",
+    "build:host": "tsdown --config tsdown.host.config.ts",
+    "build:client": "tsdown --config tsdown.client.config.ts && tsdown --config tsdown.admin.config.ts && tsdown --config tsdown.login.config.ts",
     "build": "pnpm run build:host && pnpm run build:client",
     "dev:client": "tsdown --config tsdown.client.config.ts --watch"
   },
@@ -43,6 +44,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/dsh-client-runtime": "link:../../packages/client/runtime",
+    "@deepseek-ai/dsh-client-connection": "link:../../packages/client/connection",
     "@deepseek-ai/dsh-client-ui-layout": "link:../../packages/client/ui-layout",
     "@deepseek-ai/dsh-client-ui-sidebar": "link:../../packages/client/ui-sidebar",
     "@deepseek-ai/dsh-client-ui-slots": "link:../../packages/client/ui-slots",
