@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import type { TeamRole, TeamUser } from './types.ts'
+import type { TeamLogRecord, TeamRole, TeamSessionOwner, TeamUser } from './types.ts'
 import { readTeamConfig } from './config.ts'
 
 export type TeamAccount = TeamUser & { password: string }
@@ -11,6 +11,15 @@ type AccountRow = {
   status: TeamUser['status']
   role: TeamRole
   password: string
+}
+
+type SessionOwnerRow = {
+  session_id: string
+  user_id: string
+  user_name: string
+  email: string | null
+  created_at: Date
+  last_active_at: Date
 }
 
 /** PostgreSQL persistence for team-platform accounts. */
@@ -31,6 +40,39 @@ export class TeamDatabase {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS team_audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        level TEXT NOT NULL CHECK (level IN ('info', 'warn', 'error')),
+        event TEXT NOT NULL,
+        source TEXT NOT NULL,
+        request_id TEXT,
+        user_id TEXT,
+        session_id TEXT,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb
+      )
+    `)
+    await this.pool.query("ALTER TABLE team_audit_logs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'unknown'")
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS team_session_owners (
+        session_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `)
+    await this.pool.query(`
+      INSERT INTO team_session_owners (session_id, user_id, created_at, last_active_at)
+      SELECT session_id, user_id, MIN(occurred_at), MAX(occurred_at)
+      FROM team_audit_logs
+      WHERE event = 'session.create' AND session_id IS NOT NULL AND user_id IS NOT NULL
+      GROUP BY session_id, user_id
+      ON CONFLICT (session_id) DO NOTHING
+    `)
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_occurred_at_idx ON team_audit_logs (occurred_at DESC)')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_user_id_idx ON team_audit_logs (user_id, occurred_at DESC)')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_session_id_idx ON team_audit_logs (session_id, occurred_at DESC)')
   }
 
   async close(): Promise<void> {
@@ -63,6 +105,52 @@ export class TeamDatabase {
   async deleteAccount(id: string): Promise<boolean> {
     const result = await this.client().query('DELETE FROM team_users WHERE id = $1', [id])
     return result.rowCount === 1
+  }
+
+  async recordAuditLog(entry: TeamLogRecord): Promise<void> {
+    await this.client().query(
+      `INSERT INTO team_audit_logs (level, event, source, request_id, user_id, session_id, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [
+        entry.level,
+        entry.event,
+        entry.source,
+        entry.requestId ?? null,
+        entry.userId ?? null,
+        entry.sessionId ?? null,
+        JSON.stringify(entry.details ?? {}),
+      ],
+    )
+  }
+
+  async bindSessionOwner(sessionId: string, userId: string): Promise<boolean> {
+    const result = await this.client().query(
+      `INSERT INTO team_session_owners (session_id, user_id)
+       VALUES ($1, $2)
+       ON CONFLICT (session_id) DO UPDATE SET last_active_at = NOW()
+       WHERE team_session_owners.user_id = EXCLUDED.user_id
+       RETURNING session_id`,
+      [sessionId, userId],
+    )
+    return result.rowCount === 1
+  }
+
+  async listSessionOwners(): Promise<TeamSessionOwner[]> {
+    const result = await this.client().query<SessionOwnerRow>(
+      `SELECT owners.session_id, owners.user_id, users.name AS user_name, users.email,
+              owners.created_at, owners.last_active_at
+       FROM team_session_owners AS owners
+       JOIN team_users AS users ON users.id = owners.user_id
+       ORDER BY users.name, owners.last_active_at DESC`,
+    )
+    return result.rows.map(row => ({
+      sessionId: row.session_id,
+      userId: row.user_id,
+      userName: row.user_name,
+      ...(row.email === null ? {} : { email: row.email }),
+      createdAt: row.created_at.toISOString(),
+      lastActiveAt: row.last_active_at.toISOString(),
+    }))
   }
 
   private client(): Pool {

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Team Platform 产品与实施路线图</title>
+  <style>
+    :root{--bg:#f3f6fb;--card:#fff;--text:#172033;--muted:#667085;--line:#e5eaf2;--blue:#1677ff;--blue-soft:#eaf3ff;--green:#16a34a;--green-soft:#eaf8ef;--orange:#d97706;--orange-soft:#fff6e8;--red:#dc2626;--red-soft:#fff0f0;--shadow:0 14px 42px rgba(20,43,80,.08)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--text);font:14px/1.65 Inter,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(circle at 15% 0,#e7f2ff 0,transparent 30%),var(--bg)}
+    button{font:inherit}.shell{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:100vh}.side{position:sticky;top:0;height:100vh;padding:28px 20px;border-right:1px solid var(--line);background:rgba(255,255,255,.9);backdrop-filter:blur(14px)}
+    .brand{display:flex;gap:12px;align-items:center;margin-bottom:30px}.brand-mark{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;color:#fff;font-weight:800;background:linear-gradient(135deg,#1677ff,#6aaeff);box-shadow:0 10px 24px rgba(22,119,255,.25)}.brand small{display:block;color:var(--muted)}
+    nav a{display:block;margin:4px 0;padding:9px 12px;color:#465066;text-decoration:none;border-radius:9px}nav a:hover{color:var(--blue);background:var(--blue-soft)}.side-note{position:absolute;right:20px;bottom:24px;left:20px;padding:14px;border:1px solid var(--line);border-radius:12px;color:var(--muted);background:#fafcff;font-size:12px}
+    main{width:min(1240px,calc(100% - 48px));margin:0 auto;padding:38px 0 80px}.hero{padding:36px;border:1px solid rgba(255,255,255,.8);border-radius:24px;background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(247,251,255,.94));box-shadow:var(--shadow)}
+    .eyebrow{color:var(--blue);font-size:12px;font-weight:800;letter-spacing:1.5px}.hero h1{max-width:850px;margin:10px 0 12px;font-size:36px;line-height:1.25}.hero p{max-width:900px;margin:0;color:var(--muted);font-size:16px}.hero-grid,.grid-3,.grid-2{display:grid;gap:16px}.hero-grid{grid-template-columns:repeat(3,1fr);margin-top:26px}.grid-3{grid-template-columns:repeat(3,1fr)}.grid-2{grid-template-columns:repeat(2,1fr)}
+    .metric,.card,.stage{border:1px solid var(--line);border-radius:16px;background:var(--card);box-shadow:0 8px 28px rgba(20,43,80,.045)}.metric{padding:18px}.metric strong{display:block;margin-bottom:3px;font-size:18px}.metric span,.muted{color:var(--muted)}
+    section{scroll-margin-top:20px;margin-top:42px}section>h2{margin:0 0 6px;font-size:25px}section>.lead{margin:0 0 20px;color:var(--muted)}.card{padding:22px}.card h3{margin:0 0 8px}.card p{margin:6px 0;color:var(--muted)}
+    .alert{display:flex;gap:14px;padding:20px;border:1px solid #ffd5d5;border-radius:15px;background:var(--red-soft)}.alert .icon{font-size:25px}.alert strong{display:block;margin-bottom:4px;color:#9f1d1d}.alert p{margin:0;color:#794343}
+    .flow{display:flex;align-items:stretch;gap:10px;overflow:auto;padding:6px 2px 12px}.node{flex:1;min-width:145px;padding:16px;border:1px solid var(--line);border-radius:12px;background:#fff;text-align:center}.node strong{display:block}.node span{color:var(--muted);font-size:12px}.arrow{display:grid;place-items:center;color:#9aa4b5;font-size:20px}
+    .option{position:relative;padding-top:46px}.option .badge{position:absolute;top:16px;right:16px;padding:3px 9px;border-radius:999px;font-size:12px}.recommended{border-color:#b9d8ff}.recommended .badge{color:#075fc7;background:var(--blue-soft)}.later .badge{color:#9a5700;background:var(--orange-soft)}.limited .badge{color:#596273;background:#f1f3f6}
+    ul{margin:10px 0 0;padding-left:20px}li{margin:5px 0}.compare{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:#fff}.compare th,.compare td{padding:13px 15px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.compare th{background:#f8fafc}.compare tr:last-child td{border-bottom:0}.yes{color:var(--green);font-weight:700}.partial{color:var(--orange);font-weight:700}.no{color:var(--red);font-weight:700}
+    .stage{margin:16px 0;overflow:hidden}.stage-head{display:grid;grid-template-columns:58px minmax(0,1fr) auto;gap:16px;align-items:center;padding:20px 22px;cursor:pointer}.stage-no{display:grid;place-items:center;width:46px;height:46px;border-radius:14px;color:var(--blue);font-size:18px;font-weight:800;background:var(--blue-soft)}.stage-title h3{margin:0}.stage-title p{margin:2px 0 0;color:var(--muted)}.stage-toggle{border:0;color:var(--blue);background:transparent;cursor:pointer}.stage-body{display:none;padding:0 22px 22px 96px}.stage.open .stage-body{display:block}.stage-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.mini{padding:15px;border-radius:12px;background:#f8fafc}.mini h4{margin:0 0 7px}.mini p,.mini ul{margin-top:4px}.effect{margin-top:14px;padding:15px;border-left:4px solid var(--green);border-radius:8px;background:var(--green-soft)}
+    code{padding:2px 6px;border:1px solid #e1e6ee;border-radius:5px;color:#334155;background:#f8fafc;font-family:"Cascadia Code",Consolas,monospace;font-size:12px}.decision{padding:24px;border:1px solid #b9d8ff;border-radius:17px;background:linear-gradient(135deg,#f7fbff,#edf6ff)}.decision h3{margin-top:0}.decision ol{padding-left:22px}.check{display:flex;gap:9px;align-items:flex-start;margin:9px 0}.check input{margin-top:5px}.footer{margin-top:50px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted)}
+    @media(max-width:980px){.shell{grid-template-columns:1fr}.side{display:none}.hero-grid,.grid-3,.stage-cols{grid-template-columns:1fr}.grid-2{grid-template-columns:1fr}main{width:min(100% - 28px,1240px);padding-top:18px}.hero{padding:24px}.hero h1{font-size:28px}.stage-body{padding-left:22px}.flow{align-items:stretch;flex-direction:column}.arrow{transform:rotate(90deg)}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><div class="brand-mark">AI</div><div><strong>TEAM PLATFORM</strong><small>产品实施路线图</small></div></div>
+    <nav>
+      <a href="#position">产品定位</a><a href="#constraint">关键限制</a><a href="#architecture">部署选择</a><a href="#roadmap">分阶段路线</a><a href="#data">数据边界</a><a href="#decision">现在先做什么</a>
+    </nav>
+    <div class="side-note">适用场景：DSH 部署在服务器 A，员工在个人电脑通过浏览器访问。</div>
+  </aside>
+  <main>
+    <header class="hero" id="position">
+      <div class="eyebrow">DEEPSEEK HARNESS · INTERNAL WORKBENCH</div>
+      <h1>从统一 Agent 入口，逐步演进为可追踪研发成果的公司 AI 工作台</h1>
+      <p>先解决身份、会话和使用可见，再连接真实代码环境、Git 成果和验证结果。每个阶段都能单独验收，不强迫员工创建任务，也不把不确定的数据包装成“效率”。</p>
+      <div class="hero-grid">
+        <div class="metric"><strong>当前已完成</strong><span>登录、账号、Session 归属、基础分析</span></div>
+        <div class="metric"><strong>下一个里程碑</strong><span>明确代码运行位置并接通 Git 上下文</span></div>
+        <div class="metric"><strong>长期结果</strong><span>Session → 代码成果 → 测试 → 可审核经验</span></div>
+      </div>
+    </header>
+
+    <section id="constraint">
+      <h2>先理解一个决定全局的限制</h2>
+      <p class="lead">Web 页面在哪台电脑打开，不代表 Agent 就在哪台电脑执行。</p>
+      <div class="alert"><div class="icon">!</div><div><strong>员工只通过浏览器访问服务器 A 时，DSH Host 的文件、Bash 和 Git 默认都在服务器 A 执行。</strong><p>浏览器受安全沙箱限制，服务器 A 不能直接读取员工电脑上的 <code>C:\project</code>、本地 Git 状态和未 Push 的 Commit。要操作员工本地代码，必须增加本地执行端；否则代码仓库必须放在服务器 A。</p></div></div>
+      <div class="flow" style="margin-top:18px"><div class="node"><strong>员工电脑</strong><span>浏览器 UI</span></div><div class="arrow">→</div><div class="node"><strong>服务器 A</strong><span>登录、DSH Host、Agent</span></div><div class="arrow">→</div><div class="node"><strong>服务器工作区</strong><span>文件、Bash、Git 实际执行位置</span></div><div class="arrow">→</div><div class="node"><strong>PostgreSQL / Redis</strong><span>用户、归属、登录状态、分析</span></div></div>
+    </section>
+
+    <section id="architecture">
+      <h2>三种可行部署方式</h2>
+      <p class="lead">路线图推荐先走“服务器独立工作区”，因为它最符合当前服务器 A 的架构，也最容易验证。</p>
+      <div class="grid-3">
+        <article class="card option recommended"><span class="badge">第一版推荐</span><h3>A. 服务器独立工作区</h3><p>每个用户在服务器 A 拥有自己的仓库副本或 Git Worktree，DSH 在对应目录执行。</p><ul><li>服务器能直接读取 Git</li><li>容易采集 Diff、Commit 和测试</li><li>必须做好目录、进程和工具权限隔离</li><li>适合先做公司内部 MVP</li></ul></article>
+        <article class="card option later"><span class="badge">后续能力</span><h3>B. 员工电脑本地执行端</h3><p>员工安装轻量客户端，本地客户端执行文件、Bash 和 Git，服务器负责任务与数据管理。</p><ul><li>可以使用员工现有代码目录</li><li>体验最接近日常本地开发</li><li>需要安全通信、设备认证和升级机制</li><li>实现难度明显更高</li></ul></article>
+        <article class="card option limited"><span class="badge">只做补充</span><h3>C. 仅连接 Gitee API</h3><p>服务器只读取已经 Push 的 Commit、PR、Issue 和 CI。</p><ul><li>无需访问员工本地电脑</li><li>适合确认最终远程成果</li><li>看不到未提交和未 Push 的工作</li><li>不能让服务器 Agent 操作本地代码</li></ul></article>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <h2>建议的 6 个实施阶段</h2>
+      <p class="lead">点击阶段可展开。每一阶段都明确“做什么、保存什么、能达到什么效果”。</p>
+
+      <article class="stage open"><div class="stage-head"><div class="stage-no">0</div><div class="stage-title"><h3>确定代码执行架构</h3><p>先决定员工操作的是服务器仓库，还是本地仓库。</p></div><button class="stage-toggle">收起</button></div><div class="stage-body"><div class="stage-cols"><div class="mini"><h4>要做什么</h4><ul><li>第一版选择服务器独立工作区</li><li>每个用户分配独立目录</li><li>确定仓库克隆、更新和删除规则</li></ul></div><div class="mini"><h4>安全要求</h4><ul><li>用户不能切换到他人目录</li><li>Bash/文件工具限制在自己的工作区</li><li>进程和凭据按用户隔离</li></ul></div><div class="mini"><h4>验收</h4><ul><li>两个用户同时工作互不影响</li><li>不能读取另一用户仓库</li><li>Session 的 cwd 属于当前用户</li></ul></div></div><div class="effect"><strong>达到效果：</strong>平台第一次具备可信的多用户研发运行基础。没有这一步，Git 数据和用户隔离都不可靠。</div></div></article>
+
+      <article class="stage"><div class="stage-head"><div class="stage-no">1</div><div class="stage-title"><h3>Session 自动识别 Git 上下文</h3><p>创建会话后识别仓库、Remote、分支和 HEAD。</p></div><button class="stage-toggle">展开</button></div><div class="stage-body"><div class="stage-cols"><div class="mini"><h4>读取</h4><ul><li><code>git rev-parse --show-toplevel</code></li><li><code>git remote get-url origin</code></li><li><code>git branch --show-current</code></li><li><code>git rev-parse HEAD</code></li></ul></div><div class="mini"><h4>保存</h4><ul><li>session_id / user_id</li><li>仓库根目录与 Remote</li><li>分支、HEAD、采集时间</li><li>是否为非 Git 目录</li></ul></div><div class="mini"><h4>原则</h4><ul><li>只读 Git 命令</li><li>异步采集，失败不阻断会话</li><li>不保存代码正文</li></ul></div></div><div class="effect"><strong>达到效果：</strong>后台能回答“谁在哪个仓库、哪个分支使用了哪个 Session”。</div></div></article>
+
+      <article class="stage"><div class="stage-head"><div class="stage-no">2</div><div class="stage-title"><h3>后台增加“代码活动”页面</h3><p>把 Git 上下文变成开发者和管理员看得懂的页面。</p></div><button class="stage-toggle">展开</button></div><div class="stage-body"><div class="stage-cols"><div class="mini"><h4>页面信息</h4><ul><li>成员、会话、仓库</li><li>分支、HEAD、更新时间</li><li>是否存在工作区修改</li></ul></div><div class="mini"><h4>查询能力</h4><ul><li>按成员筛选</li><li>按仓库与分支分组</li><li>手动刷新 Git 状态</li></ul></div><div class="mini"><h4>验收</h4><ul><li>页面结果与命令行一致</li><li>非 Git Session 有清晰状态</li><li>普通用户只看自己的数据</li></ul></div></div><div class="effect"><strong>达到效果：</strong>当前的“使用量后台”升级为“项目与代码环境可见后台”。</div></div></article>
+
+      <article class="stage"><div class="stage-head"><div class="stage-no">3</div><div class="stage-title"><h3>保存关键 Git 快照</h3><p>不记录每句对话，只在关键时间点保存文件变化摘要。</p></div><button class="stage-toggle">展开</button></div><div class="stage-body"><div class="stage-cols"><div class="mini"><h4>采集时机</h4><ul><li>Session 创建：初始快照</li><li>回合结束：轻量刷新</li><li>HEAD 变化：成果快照</li><li>后台手动刷新：最新快照</li></ul></div><div class="mini"><h4>保存摘要</h4><ul><li>M/A/D/R 文件列表</li><li>新增与删除行数</li><li>暂存与未暂存状态</li><li>HEAD 和采集时间</li></ul></div><div class="mini"><h4>不保存</h4><ul><li>源代码全文</li><li>完整 Diff</li><li>每轮重复快照</li><li>员工本地无关目录</li></ul></div></div><div class="effect"><strong>达到效果：</strong>能展示“Session 开始前已有修改”和“使用期间检测到的新增变化”，但不宣称全部由 Agent 产生。</div></div></article>
+
+      <article class="stage"><div class="stage-head"><div class="stage-no">4</div><div class="stage-title"><h3>关联 Commit 与测试结果</h3><p>用确定性成果证明工作发生，而不是只看聊天和 Token。</p></div><button class="stage-toggle">展开</button></div><div class="stage-body"><div class="stage-cols"><div class="mini"><h4>Commit</h4><ul><li>检测 HEAD 变化</li><li>读取 SHA、作者、Message</li><li>读取文件与行数摘要</li><li>Commit 无需由 Agent 执行</li></ul></div><div class="mini"><h4>测试</h4><ul><li>项目配置验证命令</li><li>保存退出码与执行时间</li><li>关联运行时 HEAD</li><li>后续接 CI 报告</li></ul></div><div class="mini"><h4>边界</h4><ul><li>记录“期间检测到 Commit”</li><li>不声称 Commit 全由 Agent 编写</li><li>外部 Git 客户端提交也能检测</li></ul></div></div><div class="effect"><strong>达到效果：</strong>平台开始回答“AI 使用期间是否形成代码提交、是否经过测试”。</div></div></article>
+
+      <article class="stage"><div class="stage-head"><div class="stage-no">5</div><div class="stage-title"><h3>自动归集为工作活动</h3><p>员工不选任务，平台按确定性规则自动汇总多个 Session。</p></div><button class="stage-toggle">展开</button></div><div class="stage-body"><div class="stage-cols"><div class="mini"><h4>归集规则</h4><ul><li>同一用户</li><li>同一 Remote 和分支</li><li>时间连续</li><li>HEAD 与文件变化相关</li></ul></div><div class="mini"><h4>形成记录</h4><ul><li>起止时间</li><li>相关 Session</li><li>文件变化与 Commit</li><li>测试结果</li></ul></div><div class="mini"><h4>员工操作</h4><ul><li>默认自动归集</li><li>必要时确认或拆分</li><li>不强制先建任务</li></ul></div></div><div class="effect"><strong>达到效果：</strong>后台以“一段连续研发工作”展示数据，而不是堆积零散 Session。</div></div></article>
+
+      <article class="stage"><div class="stage-head"><div class="stage-no">6</div><div class="stage-title"><h3>LLM 总结与经验审核</h3><p>最后才让 LLM 理解过程，原始采集不依赖 LLM。</p></div><button class="stage-toggle">展开</button></div><div class="stage-body"><div class="stage-cols"><div class="mini"><h4>输入</h4><ul><li>Session 关键事件</li><li>Git 文件变化摘要</li><li>Commit Message</li><li>测试结果</li></ul></div><div class="mini"><h4>生成</h4><ul><li>完成了什么</li><li>涉及哪些模块</li><li>遇到哪些失败</li><li>如何验证</li></ul></div><div class="mini"><h4>治理</h4><ul><li>始终标记“AI 草稿”</li><li>员工确认后生效</li><li>有复用价值才转经验/Skill</li></ul></div></div><div class="effect"><strong>达到效果：</strong>经过成果和验证支撑后，平台才能形成可信、可搜索、可复用的公司经验。</div></div></article>
+    </section>
+
+    <section id="data">
+      <h2>每个阶段能看到多少数据</h2>
+      <p class="lead">这张表用于控制预期，避免把“相关性”说成“因果归属”。</p>
+      <table class="compare"><thead><tr><th>问题</th><th>当前</th><th>接 Git 上下文</th><th>接快照/Commit</th><th>接测试/审核</th></tr></thead><tbody>
+        <tr><td>谁在使用 Agent</td><td class="yes">可以</td><td class="yes">可以</td><td class="yes">可以</td><td class="yes">可以</td></tr>
+        <tr><td>在哪个仓库和分支工作</td><td class="no">不可以</td><td class="yes">可以</td><td class="yes">可以</td><td class="yes">可以</td></tr>
+        <tr><td>期间检测到哪些文件变化</td><td class="no">不可靠</td><td class="partial">只能看当前状态</td><td class="yes">可以比较快照</td><td class="yes">可以</td></tr>
+        <tr><td>是否形成 Commit</td><td class="no">不可以</td><td class="partial">只能看到当前 HEAD</td><td class="yes">可以检测</td><td class="yes">可以</td></tr>
+        <tr><td>修改是否全部由 Agent 产生</td><td class="no">不可以</td><td class="no">不可以</td><td class="partial">只能判断时间相关</td><td class="partial">仍需独立环境或人工确认</td></tr>
+        <tr><td>成果是否通过验证</td><td class="no">不可以</td><td class="no">不可以</td><td class="partial">可看到 Commit</td><td class="yes">测试和审核可证明</td></tr>
+        <tr><td>是否值得沉淀为经验</td><td class="no">不可以</td><td class="no">不可以</td><td class="partial">只能生成草稿</td><td class="yes">审核后成立</td></tr>
+      </tbody></table>
+    </section>
+
+    <section id="decision">
+      <div class="decision"><h3>现在先做什么</h3><p>按你的部署方式，不能直接跳到“读取员工本地 Git”。第一步应先验证服务器工作区方案。</p><ol><li>在服务器 A 为测试用户建立两个独立仓库目录或 Worktree。</li><li>确认 DSH Session 的 <code>cwd</code> 指向当前用户自己的服务器目录。</li><li>服务端验证用户无法访问另一人的目录、Shell 和 Git 状态。</li><li>隔离验证通过后，再实现 Session 创建后的 Git 上下文采集。</li><li>最后增加后台“代码活动”页面。</li></ol>
+        <div style="margin-top:18px"><label class="check"><input type="checkbox" data-plan="workspace"><span>已确定第一版使用服务器独立工作区</span></label><label class="check"><input type="checkbox" data-plan="isolation"><span>已完成两个测试用户的目录与工具隔离验证</span></label><label class="check"><input type="checkbox" data-plan="git"><span>可以开始实现 Git 上下文采集</span></label></div>
+      </div>
+    </section>
+    <div class="footer">Team Platform 路线图 · 数据原则：确定性采集优先，LLM 只负责总结；员工确认优先于自动结论。</div>
+  </main>
+</div>
+<script>
+  for (const head of document.querySelectorAll('.stage-head')) head.addEventListener('click', () => {
+    const stage = head.closest('.stage'); stage.classList.toggle('open'); head.querySelector('.stage-toggle').textContent = stage.classList.contains('open') ? '收起' : '展开'
+  })
+  for (const checkbox of document.querySelectorAll('[data-plan]')) {
+    const key = `team-platform-roadmap:${checkbox.dataset.plan}`
+    checkbox.checked = localStorage.getItem(key) === '1'
+    checkbox.addEventListener('change', () => localStorage.setItem(key, checkbox.checked ? '1' : '0'))
+  }
+</script>
+</body>
+</html>
