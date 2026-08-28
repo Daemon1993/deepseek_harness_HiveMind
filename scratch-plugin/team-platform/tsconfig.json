@@ -7,7 +7,6 @@
   "include": ["src/*.ts"],
   "references": [
     { "path": "../../vendor/cordis" },
-    { "path": "../../packages/core/session" },
     { "path": "../../packages/host/webserver" }
   ]
 }

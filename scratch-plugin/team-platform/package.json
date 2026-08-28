@@ -13,7 +13,7 @@
   },
   "files": [
     "lib",
-    "login.html",
+    "admin.html",
     "cordis.patch.yml"
   ],
   "dsh": {
@@ -31,25 +31,27 @@
   },
   "scripts": {
     "build:host": "tsdown --no-config src/index.ts --format esm --platform node --out-dir lib",
-    "build:client": "tsdown --config tsdown.client.config.ts",
+    "build:client": "tsdown --config tsdown.client.config.ts && tsdown --config tsdown.admin.config.ts",
     "build": "pnpm run build:host && pnpm run build:client",
     "dev:client": "tsdown --config tsdown.client.config.ts --watch"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "link:../../vendor/cordis",
-    "@deepseek-ai/dsh-session": "link:../../packages/core/session"
+    "antd": "^6.6.1",
+    "pg": "^8.23.0",
+    "redis": "^6.2.1"
   },
   "devDependencies": {
-    "tsdown": "^0.22.2",
-    "typescript": "^5.9.2",
     "@deepseek-ai/dsh-client-runtime": "link:../../packages/client/runtime",
     "@deepseek-ai/dsh-client-ui-layout": "link:../../packages/client/ui-layout",
-    "@deepseek-ai/dsh-client-ui-slots": "link:../../packages/client/ui-slots",
     "@deepseek-ai/dsh-client-ui-sidebar": "link:../../packages/client/ui-sidebar",
-
+    "@deepseek-ai/dsh-client-ui-slots": "link:../../packages/client/ui-slots",
+    "@types/pg": "^8.23.1",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "@types/react": "~18.3.1",
-    "@types/react-dom": "~18.3.0"
+    "tsdown": "^0.22.2",
+    "typescript": "^5.9.2"
   }
 }

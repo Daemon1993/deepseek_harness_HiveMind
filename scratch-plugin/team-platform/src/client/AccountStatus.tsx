@@ -1,25 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-
-type TeamUser = {
-  id: string
-  name: string
-}
+import { currentUser, type TeamUser } from './auth.ts'
 
 export function AccountStatus() {
   const [user, setUser] = useState<TeamUser>()
 
   const refresh = useCallback(async () => {
-    try {
-      const response = await fetch('/team/session')
-      const data = await response.json() as {
-        authenticated: boolean
-        user?: TeamUser
-      }
-
-      setUser(data.authenticated ? data.user : undefined)
-    } catch {
-      setUser(undefined)
-    }
+    setUser(await currentUser())
   }, [])
 
   useEffect(() => {
