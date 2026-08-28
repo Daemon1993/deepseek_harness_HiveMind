@@ -1,18 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
-
-type LoginResponse = {
-  message?: string
-  user?: {
-    id: string
-    name: string
-  }
-}
+import { login as submitLogin } from './auth.ts'
 
 export function TeamLoginOverlay() {
   const [open, setOpen] = useState(false)
   const [userId, setUserId] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
+  const [applying, setApplying] = useState(false)
+  const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
 
   useEffect(() => {
     function showLogin(): void {
@@ -26,30 +22,25 @@ export function TeamLoginOverlay() {
 
   async function login(event: FormEvent) {
     event.preventDefault()
+    if (applying) {
+      setMessage('提交中…')
+      try {
+        const response = await fetch('/team/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, name }) })
+        const data = await response.json() as { message?: string }
+        setMessage(data.message ?? (response.ok ? '申请已提交' : '申请失败'))
+        if (response.ok) { setApplying(false); setEmail(''); setName('') }
+      } catch { setMessage('申请请求失败') }
+      return
+    }
     setMessage('登录中…')
 
-    try {
-      const response = await fetch('/team/login', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ userId, password }),
-      })
-
-      const data = await response.json() as LoginResponse
-
-      if (!response.ok) {
-        setMessage(data.message ?? '登录失败')
-        return
-      }
-
-      window.dispatchEvent(new Event('team-auth-changed'))
-      setOpen(false)
-      setPassword('')
-    } catch {
-      setMessage('登录请求失败')
+    const result = await submitLogin(userId, password)
+    if (!result.ok) {
+      setMessage(result.message)
+      return
     }
+    setOpen(false)
+    setPassword('')
   }
 
   if (!open) return null
@@ -63,8 +54,13 @@ export function TeamLoginOverlay() {
     >
       <form onSubmit={login} style={styles.dialog}>
         <h1 id="team-login-title" style={styles.title}>
-          团队 AI 平台登录
+          {applying ? '申请使用团队 AI 平台' : '团队 AI 平台登录'}
         </h1>
+
+        {applying ? <>
+          <input value={email} onChange={event => setEmail(event.target.value)} placeholder="邮箱" type="email" required style={styles.input} />
+          <input value={name} onChange={event => setName(event.target.value)} placeholder="真实姓名" required style={styles.input} />
+        </> : <>
 
         <input
           value={userId}
@@ -74,6 +70,7 @@ export function TeamLoginOverlay() {
           required
           style={styles.input}
         />
+        </>}
 
         <input
           type="password"
@@ -90,9 +87,13 @@ export function TeamLoginOverlay() {
             取消
           </button>
           <button type="submit" style={styles.button}>
-            登录
+            {applying ? '提交申请' : '登录'}
           </button>
         </div>
+
+        <button type="button" onClick={() => { setApplying(value => !value); setMessage('') }} style={styles.linkButton}>
+          {applying ? '返回登录' : '申请使用'}
+        </button>
 
         {message && <div style={styles.message}>{message}</div>}
       </form>
@@ -152,5 +153,12 @@ const styles = {
   message: {
     marginTop: 12,
     color: '#d4380d',
+  },
+  linkButton: {
+    marginTop: 12,
+    border: 0,
+    background: 'transparent',
+    color: '#1677ff',
+    cursor: 'pointer',
   },
 } as const

@@ -1,30 +1,60 @@
-import { Service, type Context } from "@deepseek-ai/cordis";
-import type { TeamServiceApi, TeamUser } from "./types.ts";
-import type {} from "@deepseek-ai/dsh-session";
+import { Service } from "@deepseek-ai/cordis";
+import type { TeamAdminUser, TeamContext, TeamServiceApi, TeamUser } from "./types.ts";
 
 import users from "./users.json" with { type: "json" };
 
 import type {} from "@deepseek-ai/dsh-host-webserver";
 import { registerTeamRoutes } from "./routes.ts";
+import { TeamDatabase, type TeamAccount } from './database.ts'
 
 export const name = "team-platform";
 
-type TeamAccount = TeamUser & {
-  password: string;
-};
-
 /** Team Platform 对外提供的 Service。 */
 export class TeamService extends Service implements TeamServiceApi {
-  private users = new Map<string, TeamAccount>(
-    users.map((user) => [user.id, user as TeamAccount]),
-  );
-  registerUser(user: TeamUser) {
-    console.log(`[team-platform] register user ${user.id}`);
-  }
-  login(userId: string, password: string): TeamUser | undefined {
+  private users = new Map<string, TeamAccount>();
+  private readonly database = new TeamDatabase()
+  async login(userId: string, password: string): Promise<TeamUser | undefined> {
     const user = this.users.get(userId);
-    if (!user || user.password !== password) return undefined;
+    if (!user || user.status !== 'active' || user.password !== password) return undefined;
     return this.getUser(userId);
+  }
+
+  async applyForAccess(email: string, name: string): Promise<TeamUser | undefined> {
+    const normalizedEmail = email.trim().toLowerCase()
+    const normalizedName = name.trim()
+    if (!normalizedEmail || !normalizedName || this.users.has(normalizedEmail)) return undefined
+    const user: TeamAccount = {
+      id: normalizedEmail,
+      name: normalizedName,
+      status: 'pending',
+      role: 'user',
+      password: '',
+      email: normalizedEmail,
+    }
+    await this.database.saveAccount(user)
+    this.users.set(user.id, user)
+    return this.getUser(user.id)
+  }
+
+  listAdminUsers(): readonly TeamAdminUser[] {
+    return [...this.users.values()].map(user => ({ ...user, role: user.role ?? 'user' }))
+  }
+
+  async updateUser(id: string, patch: Pick<TeamUser, 'name' | 'status' | 'role'>, password?: string): Promise<TeamUser | undefined> {
+    const user = this.users.get(id)
+    if (user === undefined) return undefined
+    user.name = patch.name.trim()
+    user.status = patch.status
+    user.role = patch.role
+    if (password !== undefined) user.password = password
+    await this.database.saveAccount(user)
+    return this.getUser(id)
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    const deleted = await this.database.deleteAccount(id)
+    if (deleted) this.users.delete(id)
+    return deleted
   }
 
   getUser(userId: string): TeamUser | undefined {
@@ -32,47 +62,29 @@ export class TeamService extends Service implements TeamServiceApi {
     if (!user) return undefined;
 
     const { password: _password, ...teamUser } = user;
-    return teamUser;
+    return { ...teamUser, role: teamUser.role ?? 'user' };
   }
 
-  private sessionUsers = new Map<string, TeamUser>();
-  bindSessionUser(sessionId: string, user: TeamUser) {
-    if (this.sessionUsers.has(sessionId)) {
-      return;
-    }
-    this.sessionUsers.set(sessionId, user);
-    console.log(`[team-platform] bind session ${sessionId} -> ${user.id}`);
-  }
-  getSessionUser(sessionId: string): TeamUser | undefined {
-    return this.sessionUsers.get(sessionId);
-  }
-
-  constructor(ctx: Context) {
+  constructor(ctx: ConstructorParameters<typeof Service>[0]) {
     super(ctx, "team");
+  }
 
-    ctx.on("session/event", (session, event) => {
-      let user = this.getSessionUser(session.id);
-      if (!user) {
-        user = {
-          id: "unknown",
-          name: "unknown",
-          status: "active",
-        };
-      }
-
-      console.log("[team-platform][session/event]", {
-        sessionId: session.id,
-        eventType: event.type,
-        userId: user.id,
-        userName: user.name,
-      });
-    });
+  async [Service.init](): Promise<void> {
+    await this.database.connect()
+    const stored = await this.database.loadAccounts()
+    if (stored.length === 0) {
+      for (const account of users as TeamAccount[]) await this.database.saveAccount(account)
+      this.users = new Map((users as TeamAccount[]).map(account => [account.id, { ...account }]))
+    } else {
+      this.users = new Map(stored.map(account => [account.id, account]))
+    }
+    this.ctx.effect(() => async () => this.database.close(), 'team-platform.database')
   }
 }
 
 
 
-export function apply(ctx: Context) {
+export function apply(ctx: TeamContext) {
   console.log("[team-platform] loaded");
   ctx.plugin(TeamService);
 
