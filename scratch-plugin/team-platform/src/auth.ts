@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createClient, type RedisClientType } from 'redis'
 import { readTeamConfig } from './config.ts'
+import { writeTeamLog } from './team-log.ts'
 
 const COOKIE_NAME = 'team_session'
 const MAX_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -18,8 +19,15 @@ export class AuthSessions {
 
   static async connect(): Promise<AuthSessions> {
     const client = createClient({ url: await readTeamConfig('REDIS_URL'), RESP: 2 })
-    client.on('error', () => { console.error('[team-platform] Redis connection error') })
+    client.on('error', error => {
+      writeTeamLog({
+        level: 'error',
+        event: 'redis.connection.failed',
+        details: { message: error instanceof Error ? error.message : String(error) },
+      })
+    })
     await client.connect()
+    writeTeamLog('Redis connected')
     return new AuthSessions(client)
   }
 

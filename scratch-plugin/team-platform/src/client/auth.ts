@@ -35,3 +35,15 @@ export async function login(userId: string, password: string): Promise<{ ok: tru
     return { ok: false, message: '登录请求失败' }
   }
 }
+
+/** End the current browser session and notify all mounted account views. */
+export async function logout(): Promise<boolean> {
+  try {
+    const response = await fetch('/team/logout', { method: 'POST' })
+    if (!response.ok) return false
+    window.dispatchEvent(new Event('team-auth-changed'))
+    return true
+  } catch {
+    return false
+  }
+}

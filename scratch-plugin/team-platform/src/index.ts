@@ -1,11 +1,13 @@
 import { Service } from "@deepseek-ai/cordis";
-import type { TeamAdminUser, TeamContext, TeamServiceApi, TeamUser } from "./types.ts";
+import type { TeamAdminUser, TeamAuditLogInput, TeamContext, TeamServiceApi, TeamSessionOwner, TeamUser } from "./types.ts";
 
 import users from "./users.json" with { type: "json" };
 
 import type {} from "@deepseek-ai/dsh-host-webserver";
+import type {} from "@deepseek-ai/dsh-client-connection";
 import { registerTeamRoutes } from "./routes.ts";
 import { TeamDatabase, type TeamAccount } from './database.ts'
+import { writeTeamLog } from './team-log.ts'
 
 export const name = "team-platform";
 
@@ -57,6 +59,27 @@ export class TeamService extends Service implements TeamServiceApi {
     return deleted
   }
 
+  async bindSessionOwner(sessionId: string, userId: string): Promise<boolean> {
+    return this.database.bindSessionOwner(sessionId, userId)
+  }
+
+  async listSessionOwners(): Promise<readonly TeamSessionOwner[]> {
+    return this.database.listSessionOwners()
+  }
+
+  async audit(entry: TeamAuditLogInput): Promise<void> {
+    const record = writeTeamLog(entry)
+    try {
+      await this.database.recordAuditLog(record)
+    } catch (error) {
+      writeTeamLog({
+        level: 'error',
+        event: 'audit.persist.failed',
+        details: { message: error instanceof Error ? error.message : String(error) },
+      })
+    }
+  }
+
   getUser(userId: string): TeamUser | undefined {
     const user = this.users.get(userId);
     if (!user) return undefined;
@@ -85,11 +108,11 @@ export class TeamService extends Service implements TeamServiceApi {
 
 
 export function apply(ctx: TeamContext) {
-  console.log("[team-platform] loaded");
+  writeTeamLog('Plugin loaded')
   ctx.plugin(TeamService);
 
-  ctx.inject(["webServer", "team"], (ctx) => {
-    console.log("[team-platform] webServer ready");
+  ctx.inject(["webServer", "connection", "team", "sessionController"], (ctx) => {
+    writeTeamLog('Web server ready')
     ctx.effect(() => registerTeamRoutes(ctx));
   });
 }
