@@ -1,0 +1,5 @@
+.env
+.env.server
+lib/
+node_modules/
+*.tgz

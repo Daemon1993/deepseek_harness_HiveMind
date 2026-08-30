@@ -1,0 +1,67 @@
+{
+  "name": "dsh-team-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.mjs",
+  "exports": {
+    ".": "./lib/index.mjs",
+    "./package.json": "./package.json",
+    "./client": {
+      "default": "./lib/client.js"
+    }
+  },
+  "files": [
+    "lib",
+    "login.html",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "scripts": {
+    "build:host": "tsdown --config tsdown.host.config.ts",
+    "build:client": "tsdown --config tsdown.client.config.ts",
+    "build:login": "tsdown --config tsdown.login.config.ts",
+    "build": "pnpm run build:host && pnpm run build:client && pnpm run build:login",
+    "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start-local.ps1",
+    "pack:plugin": "pnpm run build && pnpm pack"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-credentials": "link:../../packages/credentials/credentials",
+    "@deepseek-ai/dsh-session": "link:../../packages/core/session",
+    "@deepseek-ai/dsh-session-controller": "link:../../packages/api/session-controller",
+    "@deepseek-ai/dsh-session-persistence": "link:../../packages/session/session-persistence",
+    "@deepseek-ai/dsh-tools": "link:../../packages/core/tools"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../vendor/cordis",
+    "@deepseek-ai/dsh-client-connection": "link:../../packages/client/connection",
+    "@deepseek-ai/dsh-client-runtime": "link:../../packages/client/runtime",
+    "@deepseek-ai/dsh-host-webserver": "link:../../packages/host/webserver",
+    "@deepseek-ai/dsh-client-ui-layout": "link:../../packages/client/ui-layout",
+    "@deepseek-ai/dsh-client-ui-sidebar": "link:../../packages/client/ui-sidebar",
+    "@deepseek-ai/dsh-client-ui-slots": "link:../../packages/client/ui-slots",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "antd": "^6.6.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^5.9.2"
+  }
+}

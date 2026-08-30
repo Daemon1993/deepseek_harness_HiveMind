@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>企业 AI 知识中枢 · 愿景与实现路线图</title>
+<style>
+  :root {
+    --bg:#f4f7fc; --card:#fff; --ink:#182238; --muted:#64748b; --line:#e2e8f0;
+    --brand:#1677ff; --brand-dark:#0b5bd6; --green:#22a05a; --amber:#d97706;
+    --red:#dc2626; --purple:#7c3aed; --cyan:#0e9f9f; --code-bg:#eef3fa;
+    --shadow-sm:0 1px 3px rgba(16,32,64,.06); --shadow-md:0 6px 24px rgba(16,32,64,.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;scroll-padding-top:20px}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.8;font-size:17px;-webkit-font-smoothing:antialiased}
+  ::selection{background:#b3d6ff;color:#0b2a52}
+  .wrap{max-width:1020px;margin:0 auto;padding:0 28px 90px}
+  header.hero{position:relative;background:linear-gradient(135deg,#0a1122 0%,#0f1f3d 48%,#0b5bd6 135%);color:#eef3fb;padding:64px 24px 52px;text-align:center;overflow:hidden}
+  header.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(600px 240px at 18% -10%,rgba(22,119,255,.28),transparent 60%),radial-gradient(520px 220px at 82% 110%,rgba(19,194,194,.16),transparent 60%);pointer-events:none}
+  .hero .kicker{letter-spacing:4px;font-size:13px;color:#7fa8ff;font-weight:700}
+  .hero h1{font-size:36px;margin:12px 0 10px;letter-spacing:.5px;text-shadow:0 2px 24px rgba(0,0,0,.25)}
+  .hero p{color:#b9c8e0;max-width:720px;margin:0 auto;font-size:16px}
+  .hero .tags{margin-top:20px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .hero .tag{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.20);padding:6px 16px;border-radius:22px;font-size:13px;color:#d9e6f8}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 22px;margin:24px 0;font-size:15px;display:flex;flex-wrap:wrap;gap:8px 14px;box-shadow:var(--shadow-sm)}
+  nav.toc a{color:var(--brand-dark);text-decoration:none;font-weight:500}
+  nav.toc a:hover{text-decoration:underline}
+  nav.toc .sep{color:#cbd5e1}
+  .part{margin-top:44px;border-radius:18px;overflow:hidden;border:1px solid var(--line);box-shadow:var(--shadow-md)}
+  .part>.part-head{padding:22px 30px;color:#fff;display:flex;align-items:center;gap:16px}
+  .part.zero>.part-head{background:linear-gradient(120deg,#1e293b,#334155)}
+  .part.one>.part-head{background:linear-gradient(120deg,#0b5bd6,#3b8bff)}
+  .part.two>.part-head{background:linear-gradient(120deg,#7c3aed,#0e9f9f)}
+  .part.three>.part-head{background:linear-gradient(120deg,#d97706,#f59e0b)}
+  .part.four>.part-head{background:linear-gradient(120deg,#22a05a,#52c41a)}
+  .part-head .num{width:44px;height:44px;border-radius:11px;background:rgba(255,255,255,.16);display:grid;place-items:center;font-weight:800;font-size:19px;flex-shrink:0}
+  .part-head h2{font-size:21px}
+  .part-head .sub{font-size:14px;opacity:.88}
+  section.block{background:var(--card);padding:24px 30px;border-top:1px solid var(--line)}
+  section.block:first-child{border-top:0}
+  h3.sec{font-size:18px;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+  h3.sec::before{content:'';width:5px;height:18px;border-radius:3px;background:linear-gradient(180deg,var(--brand),#69b1ff)}
+  section.block p{color:#3d4a5f;margin-bottom:10px}
+  .lead{color:var(--muted)!important;font-size:15px}
+  code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;background:var(--code-bg);padding:1px 7px;border-radius:5px;border:1px solid #dde7f3}
+  pre{background:#0d1526;color:#d7e3f4;padding:16px 18px;border-radius:12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;overflow-x:auto;line-height:1.7;margin:12px 0}
+  pre .c{color:#64748b}
+  .tbl-wrap{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-sm)}
+  table{width:100%;border-collapse:collapse;font-size:15px;min-width:560px}
+  th{background:linear-gradient(180deg,#f1f6fd,#e9f1fb);text-align:left;padding:11px 15px;font-weight:700;color:#2b3a55;white-space:nowrap;border-bottom:1px solid var(--line)}
+  td{padding:11px 15px;border-top:1px solid #eef2f8;vertical-align:top}
+  tbody tr:nth-child(even) td{background:#fafcff}
+  tbody tr:hover td{background:#f0f7ff}
+  .pill{display:inline-block;padding:2px 11px;border-radius:12px;font-size:13px;font-weight:600;margin-right:5px}
+  .pill.b{background:#e6f4ff;color:#0b5bd6}
+  .pill.g{background:#ecfdf3;color:var(--green)}
+  .pill.a{background:#fff7e6;color:var(--amber)}
+  .pill.r{background:#fef2f2;color:var(--red)}
+  .pill.p{background:#f5f0ff;color:var(--purple)}
+  .pill.c{background:#e6fffb;color:var(--cyan)}
+  /* 金字塔 */
+  .pyramid{display:flex;flex-direction:column;gap:10px;max-width:760px;margin:18px auto}
+  .pyramid .layer{border-radius:12px;padding:14px 20px;color:#fff;position:relative}
+  .pyramid .l4{background:linear-gradient(120deg,#d97706,#f59e0b)}
+  .pyramid .l3{background:linear-gradient(120deg,#7c3aed,#a78bfa)}
+  .pyramid .l2{background:linear-gradient(120deg,#0b5bd6,#3b8bff)}
+  .pyramid .l1{background:linear-gradient(120deg,#1e293b,#334155)}
+  .pyramid .layer b{font-size:16px}
+  .pyramid .layer small{display:block;opacity:.88;font-size:13px;margin-top:2px}
+  .pyramid .layer .tag{float:right;font-size:12px;background:rgba(255,255,255,.18);padding:2px 10px;border-radius:10px}
+  /* 卡片 */
+  .feature{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:14px 0}
+  .feat{background:#fff;border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:12px;padding:14px 18px;box-shadow:var(--shadow-sm)}
+  .feat h4{font-size:15.5px;margin-bottom:5px}
+  .feat p{font-size:13.5px!important;color:#4a5668!important;margin:0!important}
+  .feat .status{font-size:12.5px;color:var(--muted);margin-top:5px}
+  /* 阶段路线 */
+  .road{display:flex;flex-direction:column;gap:0;max-width:680px;margin:14px 0}
+  .road .step{border-left:3px solid var(--cyan);padding:10px 0 10px 20px;position:relative;background:linear-gradient(90deg,#fbfcfe,#fff);border-radius:0 10px 10px 0;margin:4px 0}
+  .road .step::before{content:'';position:absolute;left:-8px;top:18px;width:13px;height:13px;border-radius:50%;background:var(--cyan)}
+  .road .step.done::before{background:var(--green)}
+  .road .step b{color:var(--brand-dark);font-size:15px}
+  .road .step small{display:block;color:var(--muted);font-size:13px}
+  .qa{border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden;background:#fff}
+  .qa summary{padding:14px 19px;font-weight:600;font-size:16px;cursor:pointer;background:#fafcff}
+  .qa summary:hover{background:#f0f5ff}
+  .qa summary::marker{color:var(--brand)}
+  .qa .body{padding:6px 19px 16px;font-size:15px;color:#3d4a5f}
+  .to-top{position:fixed;right:24px;bottom:24px;width:44px;height:44px;border-radius:50%;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow-md);cursor:pointer;font-size:18px;color:var(--brand-dark);display:grid;place-items:center}
+  footer{text-align:center;color:var(--muted);font-size:13.5px;margin-top:52px}
+  @media (max-width:720px){body{font-size:16px}section.block{padding:20px 18px}.hero h1{font-size:28px}.feature{grid-template-columns:1fr}}
+  @media print{
+    body{background:#fff;font-size:14px}.wrap{max-width:none}
+    header.hero,.part-head,th,.feat,.road .step{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    nav.toc,.to-top{display:none}.part{box-shadow:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="kicker">DSH TEAM PLATFORM · 愿景规划</div>
+  <h1>企业 AI 知识中枢 · 愿景与实现路线图</h1>
+  <p>从 session / git / 代码变更的采集，到统一搜索、经验沉淀、需求可行性分析的完整路径</p>
+  <div class="tags">
+    <span class="tag">四层金字塔</span><span class="tag">会话经验卡</span><span class="tag">统一搜索</span>
+    <span class="tag">RAG 经验复用</span><span class="tag">项目能力画像</span><span class="tag">决策辅助</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <a href="#p0">0 北极星</a><span class="sep">·</span>
+  <a href="#p1">1 四层架构</a><span class="sep">·</span>
+  <a href="#p2">2 逐层详解</a><span class="sep">·</span>
+  <a href="#p3">3 实施路线图</a><span class="sep">·</span>
+  <a href="#p4">4 三个硬前提</a><span class="sep">·</span>
+  <a href="#p5">5 现有衔接</a><span class="sep">·</span>
+  <a href="#p6">6 风险诚实评估</a><span class="sep">·</span>
+  <a href="#p7">7 周一行动清单</a>
+</nav>
+
+<!-- 0 北极星 -->
+<div class="part zero" id="p0">
+  <div class="part-head"><div class="num">0</div><div><h2>北极星：企业 AI 知识中枢</h2><div class="sub">所有员工在 AI 上做过的"目标 → 过程 → 结果"，沉淀成可搜索、可复用、可决策的公司知识</div></div></div>
+  <section class="block">
+    <h3 class="sec">一句话愿景</h3>
+    <p>公司内部用 AI 做过的每一件事（会话过程、代码产出、工具用法）都被记录下来，提炼成"经验卡"，统一索引——以后任何人有任何需求，先问平台："公司里谁做过类似的？哪些项目适合？怎么实现？" 平台自动检索、分析、给出带引用的建议。</p>
+    <div class="feature">
+      <div class="feat"><h4>统一搜索</h4><p>"哪做过、谁做过、怎么做的"——跨项目检索全部历史</p><div class="status">依赖 ② 提炼层</div></div>
+      <div class="feat"><h4>能力画像</h4><p>每个项目"解决过什么问题、擅长什么技术"——自动生成</p><div class="status">依赖 ② 提炼层</div></div>
+      <div class="feat"><h4>需求可行性分析</h4><p>"这个需求在项目 X 能做吗、已有经验是什么、风险在哪"</p><div class="status">依赖 ③ 检索层</div></div>
+      <div class="feat"><h4>经验复用建议</h4><p>新需求 → 推荐可复用的方案/提示词/相关提交</p><div class="status">依赖 ④ 问答层</div></div>
+    </div>
+  </section>
+</div>
+
+<!-- 1 四层架构 -->
+<div class="part one" id="p1">
+  <div class="part-head"><div class="num">1</div><div><h2>四层金字塔架构</h2><div class="sub">每一层依赖下一层——顺序错了，垃圾进垃圾出</div></div></div>
+  <section class="block">
+    <div class="pyramid">
+      <div class="layer l4"><span class="tag">⚠️ 可行但高风险</span><b>④ 问答/决策层</b><small>问"需求 X 怎么做" → 检索相关经验 → 分析项目情况 → 生成带引用的建议</small></div>
+      <div class="layer l3"><span class="tag">✅ 可行</span><b>③ 检索层（统一搜索）</b><small>向量 + 全文 + 元数据过滤（项目/用户/时间/权限）</small></div>
+      <div class="layer l2"><span class="tag">✅ 命门</span><b>② 提炼层（经验卡 + 能力画像）</b><small>LLM 把原始记录提炼成"目标/过程/结果/提示词"</small></div>
+      <div class="layer l1"><span class="tag">✅ 在做</span><b>① 采集层</b><small>session 日志 / git 操作 / 代码变更</small></div>
+    </div>
+    <p class="lead">这是"企业 AI 知识中枢"的最小骨架。② 是命门——没有经验卡，③④ 搜的是原始命令，搜出来也不能总结，愿景永远是 PPT。</p>
+  </section>
+</div>
+
+<!-- 2 逐层详解 -->
+<div class="part two" id="p2">
+  <div class="part-head"><div class="num">2</div><div><h2>逐层详解</h2><div class="sub">每层要做什么 · 可行性 · 产出物</div></div></div>
+
+  <section class="block">
+    <h3 class="sec">① 采集层（已有基础，正在完成）</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>数据</th><th>内容</th><th>状态</th></tr>
+      <tr><td>Session 日志</td><td>用户消息、工具调用、模型对话、token、时间线（本地完整归档 + 服务器副本）</td><td><span class="pill g">✅ 完成</span></td></tr>
+      <tr><td>Git 操作</td><td>操作流水（谁/哪会话/哪项目/动作/成败）</td><td><span class="pill g">✅ Step 1</span></td></tr>
+      <tr><td>代码变更</td><td>commit hash + 文件数 + 增删行（幂等）</td><td><span class="pill g">✅ Step 1</span></td></tr>
+      <tr><td>diff 内容层（远期）</td><td>文件路径列表 + 摘要（不存 diff 内容）</td><td><span class="pill a">📋 规划</span></td></tr>
+    </table></div>
+  </section>
+
+  <section class="block">
+    <h3 class="sec">② 提炼层（命门——下一步要做）</h3>
+    <p>把原始记录变成"可搜索的语义"，LLM 提炼：</p>
+    <pre><span class="c">输入（已有数据）:</span>
+  首条用户消息      → 目标："解决登录偶发超时"
+  工具调用序列      → 过程："定位 xxx → 改 yyy → 跑测试"
+  git 提交 + 最终回复 → 结果："提交 zzz，问题解决"
+
+<span class="c">输出（一次 LLM 调用）:</span>
+  会话经验卡: 目标 / 过程 / 结果 / 可复用提示词 / 关联提交</pre>
+    <div class="feature">
+      <div class="feat"><h4>会话经验卡</h4><p>每个会话一页：目标-过程-结果-提示词——经验的最小单元</p><div class="status"><span class="pill b">两周可出 demo</span></div></div>
+      <div class="feat"><h4>项目能力画像</h4><p>从项目历史会话+提交提取：解决过什么问题、技术栈、常用工具</p><div class="status"><span class="pill p">与经验卡同层</span></div></div>
+      <div class="feat"><h4>提交摘要</h4><p>commit 的一行语义摘要（diff-tree 数据 + message）</p><div class="status"><span class="pill c">轻量</span></div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h3 class="sec">③ 检索层（统一搜索）</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>能力</th><th>技术</th><th>回答的问题</th></tr>
+      <tr><td>语义检索</td><td>embedding + 向量库（pgvector）</td><td>"哪个项目解决过类似问题"</td></tr>
+      <tr><td>关键词检索</td><td>全文索引（命令、工具名、路径、commit）</td><td>"谁改过这个文件/跑过这个命令"</td></tr>
+      <tr><td>元数据过滤</td><td>项目 / 用户 / 时间 / 角色权限</td><td>"A 项目的历史我能搜吗"</td></tr>
+      <tr><td>重排</td><td>混合检索 + rerank</td><td>"哪个结果最相关"</td></tr>
+    </table></div>
+  </section>
+
+  <section class="block">
+    <h3 class="sec">④ 问答/决策层（你描述的场景）</h3>
+    <pre><span class="c">输入:</span> "要在项目 X 做一个需求 Y，怎么做？"
+
+<span class="c">流程:</span>
+  ① 检索: 全公司有没有人做过类似的事（跨项目经验卡）
+  ② 分析: 项目 X 的历史画像（擅长什么、技术栈、活跃度）
+  ③ 生成: 复用方案 + 相关提交/会话链接 + 可行性 + 风险 + 建议
+
+<span class="c">约束:</span> 强制引用来源 · 坏答案检测 · 权限隔离</pre>
+    <p class="lead">⚠️ 可行，但质量是三层叠加的命门：检索差→找不到对的；摘要差→找到也没用；LLM 推理差→建议不靠谱。</p>
+  </section>
+</div>
+
+<!-- 3 实施路线图 -->
+<div class="part three" id="p3">
+  <div class="part-head"><div class="num">3</div><div><h2>实施路线图</h2><div class="sub">按依赖顺序，每一阶段都是下一阶段的地基</div></div></div>
+  <section class="block">
+    <div class="road">
+      <div class="step done"><b>阶段 0 · 采集层（已完成大部分）</b><small>session/git/代码变更记录 · 管理后台统计 · 会话↔提交关联</small></div>
+      <div class="step"><b>阶段 1 · 提炼层（下一步，2-4 周）</b><small>会话经验卡 · 项目能力画像 · 提交摘要——LLM 提炼，数据现成</small></div>
+      <div class="step"><b>阶段 2 · 检索层（4-8 周）</b><small>向量库 + 全文 + 权限过滤 · 统一搜索界面 · "哪些项目做过类似的事"</small></div>
+      <div class="step"><b>阶段 3 · 问答层（8-12 周+）</b><small>决策辅助对话 · 需求可行性分析 · 经验复用建议（带引用 + 护栏）</small></div>
+    </div>
+    <p class="lead">阶段 1 的"会话经验卡"是整个愿景的立锥之地——它证明"原始记录 → 可复用知识"成立，之后的一切都建立在它之上。</p>
+  </section>
+</div>
+
+<!-- 4 硬前提 -->
+<div class="part one" id="p4">
+  <div class="part-head"><div class="num">4</div><div><h2>三个硬前提（不做就翻车）</h2><div class="sub">数据量 · 权限 · 质量</div></div></div>
+  <section class="block">
+    <div class="feature">
+      <div class="feat"><h4>① 数据要积累够</h4><p>愿景价值 = 数据量 × 数据质量。采集三个月和三天是两个系统——短期看不到价值是正常且必然的</p><div class="status"><span class="pill a">采集即价值</span></div></div>
+      <div class="feat"><h4>② 权限模型要提前设计</h4><p>跨项目检索会把 A 项目内容暴露给 B 项目的人——角色/项目隔离"谁能搜到哪个项目"，不能后面补</p><div class="status"><span class="pill r">提前设计</span></div></div>
+      <div class="feat"><h4>③ 摘要质量要有护栏</h4><p>经验卡提炼质量决定一切；坏经验进库比没有经验更危险（会误导别人）</p><div class="status"><span class="pill r">需人评估</span></div></div>
+    </div>
+  </section>
+</div>
+
+<!-- 5 现有衔接 -->
+<div class="part two" id="p5">
+  <div class="part-head"><div class="num">5</div><div><h2>与现有系统的衔接</h2><div class="sub">已经有什么 · 缺什么 · 怎么补</div></div></div>
+  <section class="block">
+    <div class="tbl-wrap"><table>
+      <tr><th>已有（可直接复用）</th><th>缺口（阶段 1 要建）</th></tr>
+      <tr><td>会话完整归档（本地 + 服务器副本）</td><td>经验卡提炼（LLM 摘要生成 + 存储表）</td></tr>
+      <tr><td>Git 操作 + 代码变更记录（含 sessionId 关联）</td><td>项目能力画像（按项目聚合历史提炼）</td></tr>
+      <tr><td>统一认证 + 权限（角色体系已就位）</td><td>检索层（向量库 + 全文索引 + 权限过滤）</td></tr>
+      <tr><td>管理后台（用户/项目/工具/模型维度统计）</td><td>统一搜索界面 + 问答对话界面</td></tr>
+      <tr><td>监控/告警思路（成本、活跃度、失败率）</td><td>质量评估（摘要正确性抽查、坏答案检测）</td></tr>
+    </table></div>
+  </section>
+</div>
+
+<!-- 6 风险 -->
+<div class="part one" id="p6">
+  <div class="part-head"><div class="num">6</div><div><h2>风险与诚实评估</h2><div class="sub">这个愿景最容易被证伪的三个地方</div></div></div>
+  <section class="block">
+    <details class="qa"><summary>摘要质量不可控怎么办？</summary><div class="body"><p>LLM 提炼的质量是命门。对策：摘要生成后人工抽样评估（建立质量标准）；检索结果带原文引用（用户可核）；坏经验标记/下架机制。</p></div></details>
+    <details class="qa"><summary>隐私边界——跨项目检索会不会泄露？</summary><div class="body"><p>会话内容可能含敏感信息。对策：① 经验卡在本地 DSH 提炼（内容不出员工机器，只上传摘要）；② 服务器端检索按项目/角色隔离；③ 敏感项目可标记为"不外搜"。</p></div></details>
+    <details class="qa"><summary>做了没人用怎么办？</summary><div class="body"><p>这是内部工具的通病。对策：不做"系统"，做"答案"——先手动/半自动地回答几个真实问题（"我们 AI 花了多少"、"哪个项目适合做 X"），证明价值再扩；种子用户是技术负责人/架构师。</p></div></details>
+    <details class="qa"><summary>价值密度——大多数记录是低价值的？</summary><div class="body"><p>诚实说：不是每条会话都值得沉淀。对策：提炼时做价值过滤（只有"目标明确 + 有产出 + 有可复用点"的会话才生成经验卡），宁缺毋滥——坏经验进库比没有更危险。</p></div></details>
+  </section>
+</div>
+
+<!-- 7 周一行动 -->
+<div class="part four" id="p7">
+  <div class="part-head"><div class="num">7</div><div><h2>周一行动清单</h2><div class="sub">回来后可以先做的四件事</div></div></div>
+  <section class="block">
+    <div class="feature">
+      <div class="feat"><h4>① 验证数据基础</h4><p>确认采集层稳定：会话/git/变更记录持续入库、管理后台统计可信、会话↔提交关联成立</p><div class="status">半天</div></div>
+      <div class="feat"><h4>② 找到"会问问题的人"</h4><p>和你的技术负责人/成本负责人聊一次，确认真实痛点（bill？安全？过程？）——验证定位</p><div class="status">半天</div></div>
+      <div class="feat"><h4>③ 设计经验卡 schema</h4><p>定义"会话经验卡"的数据结构（目标/过程/结果/提示词/关联提交/价值评分）</p><div class="status">半天</div></div>
+      <div class="feat"><h4>④ 设计权限模型</h4><p>项目/角色隔离方案：谁能搜到哪个项目的历史——提前设计，不后补</p><div class="status">半天</div></div>
+    </div>
+    <p class="lead">周一的目标不是写代码，是<strong>验证方向 + 锁定第一块砖（经验卡）</strong>。经验卡 demo 一出，整个愿景的可信度就立住了。</p>
+  </section>
+</div>
+
+<footer>
+  企业 AI 知识中枢 · 愿景与实现路线图 · DSH Team Platform
+</footer>
+
+</div>
+
+<button class="to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="回到顶部">↑</button>
+</body>
+</html>
