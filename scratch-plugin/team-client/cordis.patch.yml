@@ -1,0 +1,10 @@
+- id: llm-deepseek
+  config:
+    apiKeyEnv: !!js >-
+      process.env.TEAM_SERVER_URL ? 'TEAM_COMPANY_TOKEN' : 'DEEPSEEK_API_KEY'
+    baseURL: !!js >-
+      process.env.TEAM_SERVER_URL ? `${process.env.TEAM_SERVER_URL.replace(/\/+$/, '')}/team/api/model` : process.env.DEEPSEEK_BASE_URL
+- insert:
+    - id: team-client
+      name: dsh-team-client
+      disabled: !!js process.env.TEAM_ROLE === 'server'

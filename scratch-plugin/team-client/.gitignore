@@ -1,0 +1,4 @@
+.env.client
+lib/
+node_modules/
+*.tgz

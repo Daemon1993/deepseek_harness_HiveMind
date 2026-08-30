@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSH 团队平台 · 架构与技术方案详解</title>
+<style>
+
+  :root {
+    --bg:#f4f7fc; --card:#ffffff; --ink:#182238; --muted:#64748b; --line:#e2e8f0;
+    --brand:#1677ff; --brand-dark:#0b5bd6; --green:#22a05a; --amber:#d97706;
+    --red:#dc2626; --purple:#7c3aed; --cyan:#0e9f9f; --code-bg:#eef3fa;
+    --shadow-sm:0 1px 3px rgba(16,32,64,.06); --shadow-md:0 6px 24px rgba(16,32,64,.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;scroll-padding-top:20px}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.8;font-size:18px;-webkit-font-smoothing:antialiased}
+  ::selection{background:#b3d6ff;color:#0b2a52}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 100px}
+  header.hero{position:relative;background:linear-gradient(135deg,#0a1122 0%,#0f1f3d 48%,#0b5bd6 135%);color:#eef3fb;padding:72px 24px 58px;text-align:center;overflow:hidden}
+  header.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(600px 240px at 18% -10%,rgba(22,119,255,.28),transparent 60%),radial-gradient(520px 220px at 82% 110%,rgba(19,194,194,.16),transparent 60%);pointer-events:none}
+  .hero .kicker{letter-spacing:4px;font-size:13px;color:#7fa8ff;font-weight:700}
+  .hero h1{font-size:38px;margin:12px 0 10px;letter-spacing:.5px;text-shadow:0 2px 24px rgba(0,0,0,.25)}
+  .hero p{color:#b9c8e0;max-width:720px;margin:0 auto;font-size:16.5px}
+  .hero .tags{margin-top:22px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .hero .tag{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.20);padding:6px 16px;border-radius:22px;font-size:13.5px;color:#d9e6f8;backdrop-filter:blur(4px)}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 24px;margin:28px 0;font-size:15.5px;display:flex;flex-wrap:wrap;gap:8px 16px;box-shadow:var(--shadow-sm)}
+  nav.toc a{color:var(--brand-dark);text-decoration:none;font-weight:500}
+  nav.toc a:hover{text-decoration:underline}
+  nav.toc .sep{color:#cbd5e1}
+  .part{margin-top:52px;border-radius:18px;overflow:hidden;border:1px solid var(--line);box-shadow:var(--shadow-md)}
+  .part>.part-head{padding:26px 32px;color:#fff;display:flex;align-items:center;gap:18px}
+  .part.zero>.part-head{background:linear-gradient(120deg,#1e293b,#334155)}
+  .part.one>.part-head{background:linear-gradient(120deg,#0b5bd6,#3b8bff)}
+  .part.two>.part-head{background:linear-gradient(120deg,#7c3aed,#0e9f9f)}
+  .part.three>.part-head{background:linear-gradient(120deg,#1677ff,#0e9f9f)}
+  .part.four>.part-head{background:linear-gradient(120deg,#d97706,#f59e0b)}
+  .part-head .num{width:48px;height:48px;border-radius:12px;background:rgba(255,255,255,.16);display:grid;place-items:center;font-weight:800;font-size:20px;flex-shrink:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
+  .part-head h2{font-size:23px;letter-spacing:.3px}
+  .part-head .sub{font-size:14.5px;opacity:.88}
+  section.block{background:var(--card);padding:28px 34px;border-top:1px solid var(--line)}
+  section.block:first-child{border-top:0}
+  h3.sec{font-size:19px;margin-bottom:14px;display:flex;align-items:center;gap:10px;letter-spacing:.2px}
+  h3.sec::before{content:'';width:5px;height:19px;border-radius:3px;background:linear-gradient(180deg,var(--brand),#69b1ff)}
+  .part.two h3.sec::before,.part.three h3.sec::before{background:linear-gradient(180deg,var(--cyan),#5cdbd3)}
+  section.block p{color:#3d4a5f;margin-bottom:12px}
+  .lead{color:var(--muted)!important;font-size:16px}
+  code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:15px;background:var(--code-bg);padding:2px 8px;border-radius:5px;border:1px solid #dde7f3}
+  pre{background:#0d1526;color:#d7e3f4;padding:18px 20px;border-radius:12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14.5px;overflow-x:auto;line-height:1.7;margin:12px 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+  pre .c{color:#64748b}
+  .tbl-wrap{overflow-x:auto;margin:14px 0;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-sm)}
+  table{width:100%;border-collapse:collapse;font-size:16px;min-width:560px}
+  th{background:linear-gradient(180deg,#f1f6fd,#e9f1fb);text-align:left;padding:12px 16px;font-weight:700;color:#2b3a55;white-space:nowrap;border-bottom:1px solid var(--line)}
+  td{padding:12px 16px;border-top:1px solid #eef2f8;vertical-align:top}
+  tbody tr:nth-child(even) td{background:#fafcff}
+  tbody tr:hover td{background:#f0f7ff}
+  .flow{display:flex;align-items:stretch;margin:16px 0;flex-wrap:wrap}
+  .flow .node{flex:1;min-width:140px;background:linear-gradient(180deg,#f5f9ff,#eef5ff);border:1px solid #c4d9f8;border-radius:12px;padding:14px 16px;box-shadow:var(--shadow-sm)}
+  .flow .node b{display:block;color:var(--brand-dark);margin-bottom:4px;font-size:15.5px}
+  .flow .node small{color:var(--muted);font-size:13.5px;line-height:1.5}
+  .flow .arrow{align-self:center;color:var(--brand);font-weight:800;padding:0 8px;font-size:16px}
+  .flow.vertical{flex-direction:column;max-width:680px}
+  .flow.vertical .arrow{transform:rotate(90deg);align-self:center;padding:6px 0}
+  .tree{background:linear-gradient(180deg,#fbfcfe,#f6f9ff);border:1px solid var(--line);border-radius:14px;padding:20px;margin:14px 0;font-size:15.5px}
+  .tree .step{display:flex;gap:12px;align-items:flex-start;padding:8px 0}
+  .tree .n{width:26px;height:26px;border-radius:50%;background:linear-gradient(180deg,var(--brand),#2f7ff5);color:#fff;font-size:13.5px;display:grid;place-items:center;flex-shrink:0;margin-top:1px;box-shadow:0 2px 6px rgba(22,119,255,.35)}
+  .tree .ok{color:var(--green);font-weight:700}
+  .tree .full{color:var(--amber);font-weight:700}
+  .highlights{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin:14px 0}
+  .hl{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow-sm);transition:transform .15s ease,box-shadow .15s ease}
+  .hl:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
+  .hl h4{font-size:16.5px;color:var(--brand-dark);margin-bottom:8px}
+  .hl p{font-size:14.5px!important;color:#4a5668!important;margin:0!important}
+  .feature{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:14px 0}
+  .feat{background:#fff;border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:12px;padding:16px 20px;box-shadow:var(--shadow-sm);transition:transform .15s ease,box-shadow .15s ease}
+  .feat:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
+  .feat h4{font-size:16.5px;margin-bottom:6px;color:var(--ink)}
+  .feat p{font-size:14.5px!important;color:#4a5668!important;margin:0!important}
+  .feat .status{font-size:13px;color:var(--muted);margin-top:6px}
+  .pill{display:inline-block;padding:2px 12px;border-radius:12px;font-size:13.5px;font-weight:600;margin-right:6px}
+  .pill.b{background:#e6f4ff;color:#0b5bd6}
+  .pill.g{background:#ecfdf3;color:var(--green)}
+  .pill.a{background:#fff7e6;color:var(--amber)}
+  .pill.r{background:#fef2f2;color:var(--red)}
+  .pill.p{background:#f5f0ff;color:var(--purple)}
+  .pill.c{background:#e6fffb;color:var(--cyan)}
+  /* 类比卡片 */
+  .analogy{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:14px 0}
+  .ana{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden}
+  .ana::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--brand),#69b1ff)}
+  .ana .concept{font-size:16.5px;font-weight:700;color:var(--ink);margin-bottom:4px}
+  .ana .essence{font-size:13.5px;color:var(--muted);margin-bottom:12px;line-height:1.6}
+  .ana .like{background:#f4f8ff;border-radius:10px;padding:12px 14px;font-size:14.5px;color:#33415c}
+  .ana .like b{color:var(--brand-dark)}
+  .ana .why{font-size:13.5px;color:#4a5668;margin-top:10px}
+  /* 亮点讲法 */
+  .howto{border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden;background:#fff}
+  .howto .ht-head{display:flex;align-items:center;gap:12px;padding:16px 20px;background:#fafcff;border-bottom:1px solid var(--line)}
+  .howto .ht-head .idx{width:30px;height:30px;border-radius:50%;background:linear-gradient(180deg,var(--brand),#2f7ff5);color:#fff;font-weight:700;display:grid;place-items:center;flex-shrink:0;font-size:14px}
+  .howto .ht-head h4{font-size:16.5px;color:var(--ink);flex:1}
+  .howto .ht-body{padding:14px 20px 18px}
+  .howto .ht-body .one{font-size:14.5px;color:#33415c;margin-bottom:8px}
+  .howto .ht-body .talk{background:#f4f8ff;border-radius:10px;padding:12px 14px;font-size:14px;color:#3d4a5f;margin-bottom:8px}
+  .howto .ht-body .ask{font-size:13.5px;color:var(--muted)}
+  .qa{border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden;background:#fff}
+  .qa summary{padding:15px 20px;font-weight:600;font-size:16.5px;cursor:pointer;background:#fafcff;transition:background .15s ease}
+  .qa summary:hover{background:#f0f5ff}
+  .qa summary::marker{color:var(--brand)}
+  .qa .body{padding:8px 20px 18px;font-size:15.5px;color:#3d4a5f}
+  .qa .body ul{margin:8px 0 0 20px}
+  .step-demo{border-left:4px solid var(--cyan);background:linear-gradient(90deg,#fbfcfe,#fff);border-radius:0 12px 12px 0;padding:14px 20px;margin:12px 0;box-shadow:var(--shadow-sm)}
+  .step-demo b{color:var(--brand-dark);font-size:16px}
+  .step-demo .talk{color:#55637a;font-size:15px}
+  .to-top{position:fixed;right:26px;bottom:26px;width:46px;height:46px;border-radius:50%;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow-md);cursor:pointer;font-size:18px;color:var(--brand-dark);display:grid;place-items:center;opacity:.9;transition:opacity .2s}
+  .to-top:hover{opacity:1}
+  footer{text-align:center;color:var(--muted);font-size:14px;margin-top:60px}
+
+  /* 时序图 */
+  .seq{border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:14px 0;box-shadow:var(--shadow-sm)}
+  .seq .seq-head{display:flex;gap:10px;flex-wrap:wrap;padding:12px 16px;background:linear-gradient(180deg,#f1f6fd,#e9f1fb);border-bottom:1px solid var(--line);font-size:13.5px;font-weight:700;color:#2b3a55}
+  .seq .seq-head .p{border-radius:8px;padding:3px 12px;background:#fff;border:1px solid var(--line)}
+  .seq .seq-row{display:flex;align-items:center;gap:10px;padding:9px 16px;font-size:14px;flex-wrap:wrap}
+  .seq .seq-row:nth-child(even){background:#fafcff}
+  .seq .seq-from{font-weight:700;color:var(--brand-dark);min-width:104px}
+  .seq .seq-arrow{color:var(--muted);font-weight:800;flex-shrink:0}
+  .seq .seq-to{font-weight:700;color:#33415c;min-width:104px}
+  .seq .seq-msg{color:#3d4a5f;font-size:13.5px}
+  .seq .seq-note{padding:9px 16px;font-size:13px;color:var(--muted);background:#fbfcfe;border-top:1px dashed var(--line)}
+  /* 自测 */
+  .quiz{border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden;background:#fff}
+  .quiz summary{padding:14px 18px;font-weight:600;font-size:16px;cursor:pointer;background:#fafcff;transition:background .15s ease}
+  .quiz summary:hover{background:#f0f5ff}
+  .quiz summary::marker{color:var(--green)}
+  .quiz .body{padding:6px 18px 16px;font-size:15px;color:#3d4a5f}
+  .quiz .q{color:#33415c;font-weight:700;margin-bottom:4px}
+  .quiz .hint{color:var(--muted);font-size:13px;margin-bottom:6px}
+
+  @media (max-width:720px){
+    body{font-size:16px}
+    section.block{padding:22px 20px}
+    .part>.part-head{padding:20px 20px}
+    .hero h1{font-size:28px}
+    .highlights,.feature,.analogy{grid-template-columns:1fr}
+  }
+  @media print{
+    body{background:#fff;font-size:14px}
+    .wrap{max-width:none}
+    header.hero,.part-head,th,.hl,.feat,.ana,.howto .ht-head,.tree,.qa summary,.step-demo{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    nav.toc,.to-top{display:none}
+    .part{box-shadow:none}
+    .qa .body{display:block!important}
+  }
+
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="kicker">DEEPSEEK HARNESS · TEAM PLATFORM</div>
+  <h1>DSH 团队平台 · 架构与技术方案详解</h1>
+  <p>教学 + 备忘 + 讲解 + 自测 四合一：端到端追踪 → 概念直觉 → 系统地图 → 决策对比 → 亮点讲法 → 自测题</p>
+  <div class="tags">
+    <span class="tag">文件即真相</span><span class="tag">md5 增量</span><span class="tag">对账收敛</span>
+    <span class="tag">Token 托管</span><span class="tag">三层隔离</span><span class="tag">SSO Ticket</span>
+    <span class="tag">凭证代换</span><span class="tag">幂等自愈</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <a href="#p0">0 使用说明</a><span class="sep">·</span>
+  <a href="#p1">1 目标与架构</a><span class="sep">·</span>
+  <a href="#p2">2 端到端追踪</a><span class="sep">·</span>
+  <a href="#p3">3 概念直觉</a><span class="sep">·</span>
+  <a href="#p4">4 系统地图</a><span class="sep">·</span>
+  <a href="#p5">5 功能详解</a><span class="sep">·</span>
+  <a href="#p6">6 决策对比</a><span class="sep">·</span>
+  <a href="#p7">7 亮点讲法</a><span class="sep">·</span>
+  <a href="#p8">8 演进踩坑</a><span class="sep">·</span>
+  <a href="#p9">9 自测题</a><span class="sep">·</span>
+  <a href="#p10">10 推广解说</a><span class="sep">·</span>
+  <a href="#p11">11 面试问答</a><span class="sep">·</span>
+  <a href="#p12">12 未来路线</a>
+</nav>
+
+<!-- 0 使用说明 -->
+<div class="part zero" id="p0">
+  <div class="part-head"><div class="num">0</div><div><h2>使用说明与目标总览</h2><div class="sub">怎么读这份文档 · 要解决什么问题 · 已实现什么</div></div></div>
+  <section class="block">
+    <h3 class="sec">怎么读</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>目的</th><th>读哪</th></tr>
+      <tr><td>第一遍建立整体图景</td><td>2（端到端追踪）→ 3（概念直觉）</td></tr>
+      <tr><td>复习查细节</td><td>4（系统地图）→ 6（决策对比）</td></tr>
+      <tr><td>讲之前背话术</td><td>7（亮点讲法）→ 10（推广解说）</td></tr>
+      <tr><td>检验是否真懂</td><td>9（自测题）——答不上就是没懂</td></tr>
+    </table></div>
+  </section>
+  <section class="block">
+    <h3 class="sec">核心目标与验收</h3>
+    <div class="flow">
+      <div class="node"><b>多员工本地 DSH</b><small>各自本地 workspace / shell / Git / 工具 / 会话</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>服务器 DSH（唯一可信）</b><small>持有真密钥 · 识别每个用户 · 归档会话</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>管理员分析</b><small>谁在什么项目干了什么 · 过程 + 结果</small></div>
+    </div>
+    <p>核心验收：<b>A/B 互不可读互不可写对方会话</b>；员工机器不持有真 DeepSeek key；服务器按用户归档会话供分析。</p>
+  </section>
+  <section class="block">
+    <h3 class="sec">已实现功能</h3>
+    <div class="feature">
+      <div class="feat"><h4>统一认证</h4><p>管理员 Cookie + 本地 DSH Bearer；token Host 托管</p><div class="status">✅</div></div>
+      <div class="feat"><h4>SSO 免密进后台</h4><p>30 秒一次性 ticket 桥接</p><div class="status">✅</div></div>
+      <div class="feat"><h4>模型网关</h4><p>token 换真 key、无缓冲流式</p><div class="status">✅</div></div>
+      <div class="feat"><h4>Session 归档</h4><p>字节增量 + md5 + 对账</p><div class="status">✅</div></div>
+      <div class="feat"><h4>Git/变更同步</h4><p>commit 元数据 + diff stat</p><div class="status">✅</div></div>
+      <div class="feat"><h4>管理后台</h4><p>分析/洞察/归属/同步状态</p><div class="status">✅</div></div>
+      <div class="feat"><h4>同步 UI</h4><p>≥2s 动画 + 手动同步</p><div class="status">✅</div></div>
+      <div class="feat"><h4>代码分析面板</h4><p>项目/用户/趋势（规划）</p><div class="status">📋</div></div>
+    </div>
+  </section>
+</div>
+
+<!-- 1 整体架构 -->
+<div class="part one" id="p1">
+  <div class="part-head"><div class="num">1</div><div><h2>目标与整体架构</h2><div class="sub">拓扑 · 分层</div></div></div>
+  <section class="block">
+    <h3 class="sec">拓扑</h3>
+    <pre><span class="c">┌──────────────┐      ┌───────────────────────────────────────────┐</span>
+│ 本地 DSH A    │      │ 服务器 DSH（唯一可信）                       │
+│ · workspace   │      │ · 模型网关（token→真 key，流式转发）          │
+│ · shell/git   │ ───▶ │ · 认证（PG 账号 + Redis 会话）               │
+│ · 会话日志    │ 上传  │ · 会话归档（DSH 原生文件 + PG 索引）          │
+│ · 公司 token  │      │ · Git/代码变更记录                          │
+└──────────────┘      │ · 管理后台（分析/洞察/同步状态）               │
+┌──────────────┐      └───────────────────────────────────────────┘
+│ 本地 DSH B    │─────────────▶ 同一服务器（隔离：A 不可见 B）
+└──────────────┘</pre>
+  </section>
+  <section class="block">
+    <h3 class="sec">分层视图</h3>
+    <div class="flow vertical">
+      <div class="node"><b>存储层</b><small>DSH 原生 session.jsonl.zstd（真相）+ PG 派生索引</small></div>
+      <div class="arrow">↓</div>
+      <div class="node"><b>同步层</b><small>会话增量（md5 校验）· Git/变更上传 · 对账收敛</small></div>
+      <div class="arrow">↓</div>
+      <div class="node"><b>接口层</b><small>/team/api/*（机器，Bearer）· /team/admin/*（浏览器，Cookie）</small></div>
+      <div class="arrow">↓</div>
+      <div class="node"><b>认证层</b><small>统一认证 · 凭证托管 · SSO 桥接 · 三层隔离</small></div>
+    </div>
+  </section>
+</div>
+
+<!-- 2 端到端追踪 -->
+<div class="part two" id="p2">
+  <div class="part-head"><div class="num">2</div><div><h2>端到端追踪</h2><div class="sub">一次完整请求的生命周期——串起所有组件</div></div></div>
+  <section class="block">
+    <h3 class="sec">员工全流程（登录 → 干活 → 归档 → 分析）</h3>
+    <div class="tree">
+      <div class="step"><span class="n">①</span><div>打开 3080 → 守卫脚本查 /team/session → 未登录 → 跳登录页</div></div>
+      <div class="step"><span class="n">②</span><div>登录：浏览器提交账号密码 → Host 转发 server → 校验发 token → Host 拦截 → 浏览器只见 user</div></div>
+      <div class="step"><span class="n">③</span><div>干活：模型请求走网关（token 换真 key 流式返回）；工具本地执行</div></div>
+      <div class="step"><span class="n">④</span><div>turn 结束（session/flush）→ 拉标记 → md5 比对 → 增量/全量 → server 校验落盘 + 更新标记</div></div>
+      <div class="step"><span class="n">⑤</span><div>commit 代码 → tools/post-execute 检测 → 上传操作 + diff stat（含 sessionId）</div></div>
+      <div class="step"><span class="n">⑥</span><div>管理员看后台：分析/洞察/归属/同步状态（从 PG + 文件聚合）</div></div>
+    </div>
+  </section>
+  <section class="block">
+    <h3 class="sec">登录时序</h3>
+    <div class="seq">
+      <div class="seq-head"><span class="p">浏览器(3080)</span><span class="p">Client Host</span><span class="p">Server(3081)</span></div>
+      <div class="seq-row"><span class="seq-from">浏览器</span><span class="seq-arrow">→</span><span class="seq-to">浏览器</span><span class="seq-msg">守卫：GET /team/session → 未登录跳登录页</span></div>
+      <div class="seq-row"><span class="seq-from">浏览器</span><span class="seq-arrow">→</span><span class="seq-to">Client Host</span><span class="seq-msg">POST /team/login {userId, password}</span></div>
+      <div class="seq-row"><span class="seq-from">Client Host</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">POST /team/api/login</span></div>
+      <div class="seq-row"><span class="seq-from">Server</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">校验 PG 账号 → Redis 建 team:client-token</span></div>
+      <div class="seq-row"><span class="seq-from">Server</span><span class="seq-arrow">→</span><span class="seq-to">Client Host</span><span class="seq-msg">{ token, user }</span></div>
+      <div class="seq-row"><span class="seq-from">Client Host</span><span class="seq-arrow">→</span><span class="seq-to">Client Host</span><span class="seq-msg">credentials.set(token) + 内存 state（token 被扣下）</span></div>
+      <div class="seq-row"><span class="seq-from">Client Host</span><span class="seq-arrow">→</span><span class="seq-to">浏览器</span><span class="seq-msg">{ message, user }（无 token）→ 跳工作区</span></div>
+      <div class="seq-note">重启后：Host 用持久化 token → /team/api/session 水合恢复，免重登</div>
+    </div>
+  </section>
+  <section class="block">
+    <h3 class="sec">同步时序</h3>
+    <div class="seq">
+      <div class="seq-head"><span class="p">本地 DSH</span><span class="p">Server</span></div>
+      <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">本地 DSH</span><span class="seq-msg">session/flush（turn 提交边界）触发</span></div>
+      <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">GET status?sessionId → { fileSize, contentMd5 }</span></div>
+      <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">本地 DSH</span><span class="seq-msg">stat + 算 md5 + 前缀 md5 验证</span></div>
+      <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">① 完全一致 → 跳过（零传输）</span></div>
+      <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">② 前缀一致 → 增量 + baseSize + baseMd5 → 校验追加 → stat 校验 size</span></div>
+      <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">③ 无标记/不一致 → 全量（tmp + rename 原子替换）</span></div>
+      <div class="seq-note">Server 更新 content_md5 + file_size → 下次以此为基准</div>
+    </div>
+  </section>
+</div>
+
+<!-- 3 概念直觉 -->
+<div class="part one" id="p3">
+  <div class="part-head"><div class="num">3</div><div><h2>核心概念直觉（用类比一次看懂）</h2><div class="sub">本质 · 类比 · 反向回忆线 · 为什么</div></div></div>
+  <section class="block">
+    <div class="analogy">
+      <div class="ana"><div class="concept">① 文件即真相，DB 是目录卡</div><div class="essence">会话文件是唯一真相；数据库只是"目录卡"——记归属和进度，可随时从原件重建</div><div class="like">类比书店：<b>目录卡丢了，书架上的书还在</b>；反过来书丢了，目录卡写什么都没用</div><div class="why">反向回忆：目录卡 → DB 派生索引；书架上的书 → 会话文件。启示：索引允许短暂不准，定期盘点（对账）对齐。</div></div>
+      <div class="ana"><div class="concept">② 增量 + md5 = 只抄新页</div><div class="essence">追加式文件"新内容永远在末尾"；用"上次抄到的位置"当书签，只抄新长的部分</div><div class="like">类比手账：<b>只往后写，抄过的位置做标记，下次只抄标记之后的新页</b></div><div class="why">反向回忆：手账标记 → fileSize；验旧页没改 → md5 前缀；验不过整本重抄 → 全量回退。</div></div>
+      <div class="ana"><div class="concept">③ 对账 = 定期盘点</div><div class="essence">文件系统 + DB 无法原子，不追求"文件变了数据库立刻变"，定期扫描对齐</div><div class="like">类比仓库盘点：<b>清点货架（文件）→ 更新账本（DB）→ 账实不符就修正</b></div><div class="why">启示：对象存储（S3 桶清单）、事件溯源（日志→投影）的标准做法。</div></div>
+      <div class="ana"><div class="concept">④ Token 不进浏览器 = 管家保管钥匙</div><div class="essence">凭证由 Host 进程保管（credentials 文件 + 内存）；浏览器只见身份</div><div class="like">类比管家：<b>管家替你保管家门钥匙，前台（浏览器）只知道"你住这"</b></div><div class="why">为什么：钥匙进前台 = 谁都能翻（devtools / 历史 / localStorage）。</div></div>
+      <div class="ana"><div class="concept">⑤ SSO Ticket = 电影票</div><div class="essence">机器身份 → 浏览器身份用"一次性短命凭证"桥接（30 秒、消费即删）</div><div class="like">类比电影票：<b>一次性、30 秒作废，捡到也进不了下一场</b></div><div class="why">对比：直接传 token = 把家门钥匙贴在门上（7 天有效）。</div></div>
+      <div class="ana"><div class="concept">⑥ 三层隔离 = 门卫 → 楼层门禁 → 房间钥匙</div><div class="essence">认证（你是谁）→ 存储约束（这层楼你进不去）→ 接口校验（这间房你没钥匙）</div><div class="like">类比写字楼：<b>门卫查证件（Bearer）→ 电梯楼层门禁（DB 归属约束）→ 房间钥匙（接口校验）</b></div><div class="why">启示：防御纵深，不是单一检查点。</div></div>
+      <div class="ana"><div class="concept">⑦ 幂等自愈 = 错了就整本重印</div><div class="essence">任何对不上 → 全量重传，替换天然幂等</div><div class="like">类比复印：<b>错了不用"擦掉重写"，直接整本重印——结果一定正确</b></div><div class="why">启示：正确性靠"验证 + 幂等 + 可重建"，不靠状态永远精确。</div></div>
+      <div class="ana"><div class="concept">⑧ 每次拉标记 = 每次问坐标</div><div class="essence">client 本地不记"同步到哪了"，每次同步前问 server 要坐标（fileSize+md5）</div><div class="like">类比导航：<b>不靠记忆认路，每次出发前重新定位</b></div><div class="why">为什么：本地内存崩溃即丢、压缩会重写文件；server 标记是唯一权威。</div></div>
+    </div>
+  </section>
+</div>
+
+<!-- 4 系统地图 -->
+<div class="part two" id="p4">
+  <div class="part-head"><div class="num">4</div><div><h2>系统地图（防遗忘速查）</h2><div class="sub">端点 · 表 · Redis · 事件 · 环境变量</div></div></div>
+  <section class="block">
+    <h3 class="sec">HTTP 端点</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>域</th><th>端点</th><th>鉴权</th><th>用途</th></tr>
+      <tr><td rowspan="3"><span class="pill b">Client 本地</span></td><td>/team/login · /team/session · /team/enter · /team/logout</td><td>—</td><td>员工登录态</td></tr>
+      <tr><td>/team/login-page · /team/admin · /team/sync/status · /team/sync/now</td><td>—</td><td>登录页 / SSO / 同步状态 / 手动触发</td></tr>
+      <tr><td colspan="2" style="color:var(--muted)">守卫脚本注入 index.html（隐藏 + 跳转）</td></tr>
+      <tr><td rowspan="5"><span class="pill p">Server API</span></td><td>/team/api/login · /team/api/session</td><td>— / Bearer</td><td>登录发 token · 水合</td></tr>
+      <tr><td>/team/api/model/chat/completions</td><td>Bearer</td><td>模型网关</td></tr>
+      <tr><td>/team/api/sync/session · /session/status · /sessions</td><td>Bearer</td><td>上传 / 拉标记 / 拉列表</td></tr>
+      <tr><td>/team/api/git/ops · /git/changes</td><td>Bearer</td><td>Git / 变更上传</td></tr>
+      <tr><td>/team/api/admin-ticket · /team/admin/consume</td><td>Bearer / —</td><td>SSO code 换发与消费</td></tr>
+      <tr><td rowspan="3"><span class="pill g">Server Admin</span></td><td>/team/login · /session · /logout · /apply</td><td>—</td><td>管理员登录态 / 申请</td></tr>
+      <tr><td>/team/admin · /users · /sessions · /analytics · /insights</td><td>admin</td><td>后台页面与接口</td></tr>
+      <tr><td>/team/admin/sync-status · /sync/reconcile</td><td>admin</td><td>同步状态 · 对账</td></tr>
+    </table></div>
+  </section>
+  <section class="block">
+    <h3 class="sec">PG 表 · Redis · 事件 · 环境变量</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>类别</th><th>名称</th><th>说明</th></tr>
+      <tr><td rowspan="6"><span class="pill b">PG</span></td><td>team_users</td><td>账号：id/email/name/status/role/password</td></tr>
+      <tr><td>team_session_log</td><td>归属+标记：session_id/user_id/content_md5/file_size</td></tr>
+      <tr><td>team_audit_logs</td><td>审计：level/event/source/user/session/details JSONB</td></tr>
+      <tr><td>team_git_ops</td><td>Git 操作流水</td></tr>
+      <tr><td>team_code_changes</td><td>代码变更：commit_hash UNIQUE（幂等键）</td></tr>
+      <tr><td>team_session_owners</td><td>旧归属表（遗留）</td></tr>
+      <tr><td rowspan="3"><span class="pill p">Redis</span></td><td>team:session:*</td><td>管理员 Cookie（7 天滑动）</td></tr>
+      <tr><td>team:client-token:*</td><td>本地 DSH Bearer（7 天固定）</td></tr>
+      <tr><td>team:admin-ticket:*</td><td>SSO 一次性 code（30 秒）</td></tr>
+      <tr><td rowspan="3"><span class="pill g">事件</span></td><td>session/created · flush · disposed</td><td>同步触发（flush=提交边界）</td></tr>
+      <tr><td>tools/post-execute</td><td>Git 抓取（水瀑，必须 next()）</td></tr>
+      <tr><td>credentials/reference-updated</td><td>登录/登出 → 补传</td></tr>
+      <tr><td rowspan="4"><span class="pill a">环境变量</span></td><td>TEAM_ROLE · TEAM_SERVER_URL</td><td>角色 / server 地址</td></tr>
+      <tr><td>DB_URL · REDIS_URL</td><td>server 的 PG / Redis</td></tr>
+      <tr><td>TEAM_SESSIONS_ROOT</td><td>server 会话根（单机隔离）</td></tr>
+      <tr><td>DEEPSEEK_API_KEY</td><td>server 真密钥（只 server 内 resolve）</td></tr>
+    </table></div>
+  </section>
+</div>
+
+<!-- 5 功能详解 -->
+<div class="part three" id="p5">
+  <div class="part-head"><div class="num">5</div><div><h2>功能详解</h2><div class="sub">技术细节与关键决策</div></div></div>
+  <section class="block">
+    <h3 class="sec">5.1 认证与登录</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>机制</th><th>载体</th><th>Redis key</th><th>生命周期</th><th>消费者</th></tr>
+      <tr><td>机器认证</td><td>Bearer token</td><td>team:client-token:*</td><td>固定 7 天</td><td>本地 DSH</td></tr>
+      <tr><td>浏览器会话</td><td>HttpOnly Cookie</td><td>team:session:*</td><td>滑动续期</td><td>管理员</td></tr>
+      <tr><td>SSO 桥接</td><td>一次性 code</td><td>team:admin-ticket:*</td><td>30 秒、消费即删</td><td>浏览器跳转</td></tr>
+    </table></div>
+  </section>
+  <section class="block">
+    <h3 class="sec">5.2 模型网关</h3>
+    <div class="flow">
+      <div class="node"><b>本地 llm-deepseek</b><small>apiKeyEnv=TEAM_COMPANY_TOKEN</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>网关校验 Bearer</b><small>Redis → userId</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>换真 key</b><small>server 内 resolve</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>流式转发</b><small>无缓冲 · 10min · 50MB</small></div>
+    </div>
+    <p class="lead">最小侵入：本地 Agent Loop / 工具 / 流式行为零改动，只改配置层。</p>
+  </section>
+  <section class="block">
+    <h3 class="sec">5.3 Session 归档同步</h3>
+    <div class="tree">
+      <div class="step"><span class="n">①</span><div>拉取 server 标记 GET status → { fileSize, contentMd5 }</div></div>
+      <div class="step"><span class="n">②</span><div>本地 stat + 读文件算 md5</div></div>
+      <div class="step"><span class="n">③</span><div>完全一致 → <span class="ok">跳过</span>（零传输）</div></div>
+      <div class="step"><span class="n">④</span><div>前缀一致 → <span class="ok">增量</span>（baseSize+baseMd5，server 校验后追加 + size 校验）</div></div>
+      <div class="step"><span class="n">⑤</span><div>无标记 / 不一致 → <span class="full">全量替换</span>（tmp + rename）</div></div>
+    </div>
+    <p>触发：session/flush（主）· created · disposed · 补传。每会话单飞锁。</p>
+  </section>
+  <section class="block">
+    <h3 class="sec">5.4 Git / 代码变更</h3>
+    <div class="flow">
+      <div class="node"><b>监听 tools/post-execute</b><small>水瀑，必须 next()</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>检测 git 命令</b><small>分类 action</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>commit 成功</b><small>rev-parse + diff-tree --shortstat</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>上传元数据</b><small>含 sessionId（关联打底）</small></div>
+    </div>
+  </section>
+</div>
+
+<!-- 6 决策对比 -->
+<div class="part one" id="p6">
+  <div class="part-head"><div class="num">6</div><div><h2>决策对比总表（为什么不用 X）</h2><div class="sub">面试官最爱问对立面——这是弹药库</div></div></div>
+  <section class="block">
+    <div class="tbl-wrap"><table>
+      <tr><th>决策</th><th>选 Y</th><th>为什么不用 X</th><th>代价/注意</th></tr>
+      <tr><td>会话存储</td><td>文件真相 + DB 派生索引</td><td>不用"DB blob 为真相"：文件是官方格式，可重放/版本化</td><td>索引漂移 → 对账兜底</td></tr>
+      <tr><td>同步粒度</td><td>字节增量 + md5</td><td>不用整文件：O(n²) 带宽</td><td>需前缀校验保证安全</td></tr>
+      <tr><td>进度标记</td><td>md5（内容精确）</td><td>不用 size+mtime：漏判压缩重写</td><td>需读文件算哈希</td></tr>
+      <tr><td>位置来源</td><td>每次拉 server 标记</td><td>不用本地记：崩溃即丢、压缩弄脏</td><td>每次多一次 GET</td></tr>
+      <tr><td>会话凭证</td><td>Redis 服务端会话</td><td>不用 JWT：撤销要黑名单</td><td>需 Redis 可用</td></tr>
+      <tr><td>两套认证</td><td>Bearer + Cookie 分治</td><td>不合并：暴露 token 或嗅探调用方</td><td>多维护一套</td></tr>
+      <tr><td>跨边界凭证</td><td>30 秒一次性 code</td><td>不用 token 直传：泄露窗口 7 天 vs 30 秒</td><td>多一跳往返</td></tr>
+      <tr><td>一致性</td><td>写路径尽力 + 对账</td><td>不用事务强一致：文件系统 + DB 无法原子</td><td>短暂漂移可接受</td></tr>
+      <tr><td>并发控制</td><td>每会话单飞锁</td><td>不用消息队列：单一写入者，锁就够</td><td>最坏 409 → 全量</td></tr>
+      <tr><td>密码存储</td><td>scrypt（计划）</td><td>当前明文是 MVP 取舍</td><td>后置，已识别风险</td></tr>
+      <tr><td>真密钥</td><td>server 内 resolve</td><td>不下发给员工机器</td><td>网关唯一出口</td></tr>
+    </table></div>
+  </section>
+</div>
+
+<!-- 7 亮点讲法 -->
+<div class="part two" id="p7">
+  <div class="part-head"><div class="num">7</div><div><h2>技术亮点 · 讲法手册</h2><div class="sub">一句话 + 怎么说 + 追问</div></div></div>
+  <section class="block">
+    <div class="howto"><div class="ht-head"><span class="idx">1</span><h4>文件即真相，DB 是派生索引</h4></div><div class="ht-body">
+      <div class="one"><b>怎么说：</b>"会话原始日志（官方 DSH 格式）作为真相存文件，PG 只存归属和同步标记——标记能从文件重算。文件系统和数据库没法原子，所以写路径尽力同步 + 对账兜底，这是对象存储和事件溯源的通用模式。"</div>
+      <div class="ask">追问：索引漂移怎么办？→ 对账：启动自动 + 后台手动。</div>
+    </div></div>
+    <div class="howto"><div class="ht-head"><span class="idx">2</span><h4>md5 校验的字节增量</h4></div><div class="ht-body">
+      <div class="one"><b>怎么说：</b>"文件是追加式的，新内容永远在末尾。client 每次先拉 server 的标记（位置+指纹），本地算前缀 md5 验证没被重写，一致就只传新增字节；server 收到再用 baseMd5 校验。整个系统没有游标、没有 seq 连续性校验——复杂度从'状态对齐'降级为'内容验证'。"</div>
+      <div class="ask">追问：为什么是 md5 不是 size+mtime？→ 内容级精确；内容指纹非秘密，无盐。</div>
+    </div></div>
+    <div class="howto"><div class="ht-head"><span class="idx">3</span><h4>幂等自愈</h4></div><div class="ht-body">
+      <div class="one"><b>怎么说：</b>"全量上传是原子替换（tmp + rename），重复传同样的内容结果不变。断网、重启、并发、版本不匹配——每个异常路径都收敛到正确状态。"</div>
+      <div class="ask">追问：并发两次同步？→ 每会话单飞锁 + server 409 兜底。</div>
+    </div></div>
+    <div class="howto"><div class="ht-head"><span class="idx">4</span><h4>Token 永不进浏览器</h4></div><div class="ht-body">
+      <div class="one"><b>怎么说：</b>"登录时服务器返回的 token 被本地 Host 拦截保存，浏览器只收到用户信息。token 不会出现在 devtools、浏览器历史、localStorage——泄露面最小。重启后 Host 用持久化 token 水合恢复。"</div>
+      <div class="ask">追问：为什么要这样？→ token 进浏览器 = 钥匙放前台。</div>
+    </div></div>
+    <div class="howto"><div class="ht-head"><span class="idx">5</span><h4>SSO 短命 code 桥接</h4></div><div class="ht-body">
+      <div class="one"><b>怎么说：</b>"员工点'进后台'，Host 拿 token 换一次性 code，浏览器带 code 跳服务器消费，服务器种 Cookie。code 只能换一个新会话、30 秒过期、消费即删——泄露窗口从 7 天缩到 30 秒，OAuth2 authorization code 同款。"</div>
+      <div class="ask">追问：为什么不直接传 token？→ 长命凭证过浏览器边界 = 钥匙贴门上。</div>
+    </div></div>
+    <div class="howto"><div class="ht-head"><span class="idx">6</span><h4>模型网关凭证代换</h4></div><div class="ht-body">
+      <div class="one"><b>怎么说：</b>"本地 DSH 用公司 token 调网关，服务器校验身份后换成真 DeepSeek key 转发。员工机器上没有任何真实 API key——即使整台机器被盗也拿不到模型凭证。"</div>
+      <div class="ask">追问：流式体验？→ 无缓冲转发，客户端零感知。</div>
+    </div></div>
+    <div class="howto"><div class="ht-head"><span class="idx">7</span><h4>隔离靠数据库约束，不靠信任</h4></div><div class="ht-body">
+      <div class="one"><b>怎么说：</b>"会话归属用 DB 约束保证：ON CONFLICT DO UPDATE WHERE user_id 匹配——会话已被别人绑定，你的写入直接失败。查询层按 userId 过滤，接口层再校验，三层纵深。"</div>
+      <div class="ask">追问：隔离在哪几层？→ 存储（约束）→ 查询（过滤）→ 接口（鉴权）。</div>
+    </div></div>
+    <div class="howto"><div class="ht-head"><span class="idx">8</span><h4>fail-closed 版本门控</h4></div><div class="ht-body">
+      <div class="one"><b>怎么说：</b>"上传时校验 header.version 与 SESSION_FORMAT_VERSION，不一致返回 415。新格式客户端不会写坏老服务器，升级是明确的 fail-closed。"</div>
+      <div class="ask">追问：升级怎么办？→ 两端一起升级，格式由 DSH 单方面拥有。</div>
+    </div></div>
+  </section>
+</div>
+
+<!-- 8 演进踩坑 -->
+<div class="part one" id="p8">
+  <div class="part-head"><div class="num">8</div><div><h2>演进与踩坑记录</h2><div class="sub">三版迭代 + 六个关键坑</div></div></div>
+  <section class="block">
+    <h3 class="sec">Session 同步三版迭代</h3>
+    <div class="flow vertical">
+      <div class="node"><b>v1 增量事件 + seq 游标 + 连续性校验</b><small>游标跨根失效、压缩 seq 空洞被拒、无限 gap 刷屏、崩溃窗口重复追加</small></div>
+      <div class="arrow">↓</div>
+      <div class="node"><b>v2 整文件上传</b><small>简单正确，但 O(n²) 带宽</small></div>
+      <div class="arrow">↓</div>
+      <div class="node"><b>v3 md5 校验的字节增量（最终）</b><small>内容验证取代状态机</small></div>
+    </div>
+  </section>
+  <section class="block">
+    <h3 class="sec">六个关键踩坑</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>坑</th><th>教训</th></tr>
+      <tr><td>PowerShell ANSI 读 UTF-8，中文注释吞换行 → env 加载失败</td><td>配置避免非 ASCII 注释；脚本显式 -Encoding UTF8</td></tr>
+      <tr><td>tsdown 打包 devDeps → 值导入拉进 @Remote 装饰器 → Node 解析炸</td><td>运行时依赖放 dependencies（外部化）</td></tr>
+      <tr><td>patch 的 disabled 禁用被覆盖的目标行本身</td><td>patch 字段直接覆盖目标行；守卫放表达式内</td></tr>
+      <tr><td>换根后 PG 标记指向旧根 → 补传全跳过</td><td>标记是派生的，换根必须对账或重置</td></tr>
+      <tr><td>坏文件让 sessionController.list() 抛错 → 分析 400</td><td>端点容错降级 + 对账清理 + size 校验</td></tr>
+      <tr><td>grep -c "error" 匹配不到 ERROR → 假"构建通过"</td><td>node --check + 正确 tsc grep</td></tr>
+    </table></div>
+  </section>
+</div>
+
+<!-- 9 自测题 -->
+<div class="part two" id="p9">
+  <div class="part-head"><div class="num">9</div><div><h2>自测题（合上文档回答）</h2><div class="sub">答不上来的题 = 你还没真正掌握的点，点开对答案</div></div></div>
+  <section class="block">
+    <h3 class="sec">概念层（能推出机制吗）</h3>
+    <details class="quiz"><summary>1. 为什么"文件变了数据库不用立刻变"？</summary><div class="body"><div class="hint">提示：手账 / 目录卡</div>文件系统 + 数据库无法原子事务；数据库只是可重建的派生索引，允许短暂漂移，靠对账定期对齐——最终一致 + 例行收敛的通用模式。</div></details>
+    <details class="quiz"><summary>2. 增量同步的"书签"是什么？什么情况下书签会失效？</summary><div class="body"><div class="hint">提示：位置 + 指纹</div>书签 = fileSize（上次抄到的字节位置）+ contentMd5（前缀指纹）。失效场景：文件被压缩重写 → 前缀 md5 不一致 → 全量重传重建书签。</div></details>
+    <details class="quiz"><summary>3. 为什么 ticket 比 token 安全？类比是什么？</summary><div class="body"><div class="hint">提示：电影票</div>ticket 一次性 + 30 秒过期 + 消费即删，泄露即废；token 是 7 天长命凭证。泄露窗口从 7 天缩到 30 秒。</div></details>
+    <h3 class="sec">机制层（能讲清流程吗）</h3>
+    <details class="quiz"><summary>4. 一次同步的五个步骤是什么？每步防什么？</summary><div class="body">① 拉标记（知道 server 存到哪）② 本地算 md5（内容指纹）③ 决策（跳过/增量/全量）④ 上传（server 校验 base + size）⑤ 更新标记。防：重复传输、错误追加、标记失真。</div></details>
+    <details class="quiz"><summary>5. token 在哪些地方出现、哪些地方绝不出现？</summary><div class="body">出现：server Redis、client credentials 文件、client 内存、HTTP 头（Host→server）。绝不出现：浏览器 JS、localStorage、URL、浏览器历史。</div></details>
+    <details class="quiz"><summary>6. 三层隔离分别在哪层、用什么机制？</summary><div class="body">存储层：DB 归属约束（ON CONFLICT WHERE user_id 匹配）→ 查询层：userId 过滤 → 接口层：Bearer→userId→归属校验（403/404）。</div></details>
+    <h3 class="sec">决策层（能回答"为什么不用 X"吗）</h3>
+    <details class="quiz"><summary>7. 为什么不用 JWT / 整文件上传 / size+mtime？</summary><div class="body">JWT：无状态但撤销要黑名单；Redis 会话可撤销可续期 O(1)。整文件：O(n²) 带宽。size+mtime：漏判压缩重写，md5 内容级精确。</div></details>
+    <details class="quiz"><summary>8. 为什么两套认证不合并？合并会怎样？</summary><div class="body">合并 = 要么浏览器拿到 token（暴露）、要么 server 嗅探调用方（脆弱）。机器要可携带 Bearer、浏览器要自动 Cookie，交付方式不同。</div></details>
+    <h3 class="sec">陷阱层（能说出坑吗）</h3>
+    <details class="quiz"><summary>9. 换根后为什么同步会"全跳过"？怎么修？</summary><div class="body">PG 标记指向旧根文件，client 拉到的 md5 与本地一致 → 跳过 → 新根永远空。修：对账（清标记/删行）强制全量重建，或换根时重置标记。</div></details>
+    <details class="quiz"><summary>10. 为什么一个坏文件能拖垮整个分析端点？防御是什么？</summary><div class="body">sessionController.list() 读到坏文件（首帧非 header）直接抛错 → 端点 400 空响应。防御：端点容错降级 + 对账清理 + 增量后 size 校验防未来损坏。</div></details>
+  </section>
+</div>
+
+<!-- 10 推广解说 -->
+<div class="part three" id="p10">
+  <div class="part-head"><div class="num">10</div><div><h2>推广解说脚本</h2><div class="sub">按 demo 顺序讲，每步附"说什么"</div></div></div>
+  <section class="block">
+    <div class="step-demo"><b>Step 1 · 开场</b><div class="talk">"这是一个团队 AI 工作台：每个员工本地跑自己的 DSH，一台服务器做统一认证、模型代理和会话归档。核心理念——机器在员工手里，信任和数据边界在服务器。"</div></div>
+    <div class="step-demo"><b>Step 2 · 登录</b><div class="talk">"员工用公司账号登录。注意：token 从不进浏览器——它被本地 Host 拦截保存，浏览器只拿到身份信息。重启后自动恢复登录。"</div></div>
+    <div class="step-demo"><b>Step 3 · 干活 + 模型网关</b><div class="talk">"模型请求走服务器网关——服务器校验 token 后换成真密钥，员工机器上永远没有真实 API key。流式输出完全无感。"</div></div>
+    <div class="step-demo"><b>Step 4 · 会话同步</b><div class="talk">"点右下角'手动同步'看效果：每次触发至少 2 秒同步动画。技术上只传新增的尾部字节，md5 指纹验证，对不上就整文件重传——正确性永远兜底。"</div></div>
+    <div class="step-demo"><b>Step 5 · Git 追踪</b><div class="talk">"员工 commit 时服务器自动记录操作和改动统计——为代码分析打基础。"</div></div>
+    <div class="step-demo"><b>Step 6 · 管理后台</b><div class="talk">"管理员看分析/洞察/归属/同步状态。注意隔离：员工之间互相看不到对方会话——数据库约束保证，不是靠自觉。还能手动对账。"</div></div>
+    <div class="step-demo"><b>Step 7 · 收尾</b><div class="talk">"过程（会话）、行为（Git）、结果（代码变更）三层数据都沉淀到服务器；安全和隔离是架构层的，不是事后补丁。"</div></div>
+  </section>
+</div>
+
+<!-- 11 面试问答 -->
+<div class="part two" id="p11">
+  <div class="part-head"><div class="num">11</div><div><h2>面试问答</h2><div class="sub">高频追问与回答</div></div></div>
+  <section class="block">
+    <details class="qa"><summary>为什么文件是真相，数据库只是索引？</summary><div class="body"><p>会话文件是官方持久化格式，可重放、版本化；PG 的标记可从文件重算。文件系统 + 数据库无法原子，所以「写路径尽力 + 对账收敛」——对象存储/事件溯源通用模式。</p></div></details>
+    <details class="qa"><summary>为什么用 md5 不用 size+mtime？</summary><div class="body"><p>size+mtime 可能漏判「同大小同 mtime 内容变了」（压缩重写）。md5 内容级精确。注意：这里是内容指纹不是秘密，不加盐；加盐是密码哈希概念，且会破坏对账重算比对。</p></div></details>
+    <details class="qa"><summary>增量同步怎么保证不损坏？</summary><div class="body"><p>三重校验：① client 增量前 md5 证明前缀一致；② server 用 baseSize+baseMd5 与自身标记比对；③ 追加后 stat 校验大小 == totalSize。任何失败 → 409 → 全量替换（幂等）。</p></div></details>
+    <details class="qa"><summary>为什么 token 不进浏览器？两套认证为什么不合并？</summary><div class="body"><p>token 进浏览器 = 暴露在 devtools/历史/localStorage。合并 = 浏览器拿 token（违反底线）或嗅探调用方（脆弱）。机器要 Bearer、浏览器要 Cookie，交付方式不同。</p></div></details>
+    <details class="qa"><summary>为什么用 SSO ticket 而不是直接传 token？</summary><div class="body"><p>长命 token 跨边界泄露窗口 7 天；30 秒一次性 code 泄露即废、用途单一、消费即删——OAuth2 authorization code 标准做法。</p></div></details>
+    <details class="qa"><summary>数据隔离落实在哪几层？</summary><div class="body"><p>三层：存储（DB 归属约束，跨用户改写不可能）→ 查询（userId 过滤）→ 接口（Bearer→userId→归属校验，403/404 区分）。</p></div></details>
+    <details class="qa"><summary>为什么不用 JWT？</summary><div class="body"><p>Redis 会话可服务端撤销、可滑动续期、O(1) 校验；JWT 无状态但撤销要黑名单，复杂度转移。</p></div></details>
+    <details class="qa"><summary>100 人并发的性能怎么保证？</summary><div class="body"><p>提交边界触发（低频）+ 每批 O(增量) + 每会话单飞锁；server 每批 = Redis 鉴权 + 两次 PG + 追加写盘。早期"每次全量解码"有 O(n²) 问题，改游标缓存后消除。</p></div></details>
+    <details class="qa"><summary>已知的取舍/风险？</summary><div class="body"><p>密码明文、token 未哈希、禁用不即时生效——都识别了，按 MVP 后置。演进方向：scrypt、token sha256、网关校验 status、双 token（受官方适配器 401 重试限制）。</p></div></details>
+  </section>
+</div>
+
+<!-- 12 未来路线 -->
+<div class="part three" id="p12">
+  <div class="part-head"><div class="num">12</div><div><h2>未来路线</h2><div class="sub">安全加固 + 功能扩展</div></div></div>
+  <section class="block">
+    <div class="feature">
+      <div class="feat"><h4>代码分析面板</h4><p>项目/用户/趋势统计 + 会话↔提交关联（Step 2）</p><div class="status">📋 下一步</div></div>
+      <div class="feat"><h4>安全加固</h4><p>scrypt 密码哈希 · token sha256 · 禁用即时生效 · 登录限流</p><div class="status">🔒 后置</div></div>
+      <div class="feat"><h4>Access/Refresh 双 token</h4><p>30min + 7d + 轮换；需官方适配器 401 重试钩子</p><div class="status">🔒 后置</div></div>
+      <div class="feat"><h4>多设备管理</h4><p>deviceId + 设备列表/远程撤销</p><div class="status">🔒 后置</div></div>
+      <div class="feat"><h4>diff 内容分析</h4><p>经验沉淀、代码审查、项目记忆</p><div class="status">🚀 远期</div></div>
+      <div class="feat"><h4>报表/仪表盘</h4><p>从结构化数据层做团队报表</p><div class="status">🚀 远期</div></div>
+    </div>
+  </section>
+</div>
+
+<footer>
+  DeepSeek Harness · Team Platform · 教学 + 备忘 + 讲解 + 自测 · 2026
+</footer>
+
+</div>
+
+<button class="to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="回到顶部">↑</button>
+</body>
+</html>
