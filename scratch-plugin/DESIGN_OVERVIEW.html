@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSH 多租户平台 · 架构设计文档</title>
+<style>  :root {
+    --bg:#f4f7fc; --card:#ffffff; --ink:#182238; --muted:#64748b; --line:#e2e8f0;
+    --brand:#1677ff; --brand-dark:#0b5bd6; --green:#22a05a; --amber:#d97706;
+    --red:#dc2626; --purple:#7c3aed; --cyan:#0e9f9f; --code-bg:#eef3fa;
+    --shadow-sm:0 1px 3px rgba(16,32,64,.06); --shadow-md:0 6px 24px rgba(16,32,64,.08);
+    --shadow-lg:0 16px 48px rgba(16,32,64,.12);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;scroll-padding-top:20px}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.8;font-size:18px;-webkit-font-smoothing:antialiased}
+  ::selection{background:#b3d6ff;color:#0b2a52}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 100px}
+  header.hero{position:relative;background:linear-gradient(135deg,#0a1122 0%,#0f1f3d 48%,#0b5bd6 135%);color:#eef3fb;padding:72px 24px 58px;text-align:center;overflow:hidden}
+  header.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(600px 240px at 18% -10%,rgba(22,119,255,.28),transparent 60%),radial-gradient(520px 220px at 82% 110%,rgba(19,194,194,.16),transparent 60%);pointer-events:none}
+  .hero .kicker{letter-spacing:4px;font-size:13px;color:#7fa8ff;font-weight:700}
+  .hero h1{font-size:38px;margin:12px 0 10px;letter-spacing:.5px;text-shadow:0 2px 24px rgba(0,0,0,.25)}
+  .hero p{color:#b9c8e0;max-width:720px;margin:0 auto;font-size:16.5px}
+  .hero .tags{margin-top:22px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .hero .tag{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.20);padding:6px 16px;border-radius:22px;font-size:13.5px;color:#d9e6f8;backdrop-filter:blur(4px)}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 24px;margin:28px 0;font-size:15.5px;display:flex;flex-wrap:wrap;gap:8px 16px;box-shadow:var(--shadow-sm)}
+  nav.toc a{color:var(--brand-dark);text-decoration:none;font-weight:500}
+  nav.toc a:hover{text-decoration:underline}
+  nav.toc .sep{color:#cbd5e1}
+  .part{margin-top:52px;border-radius:18px;overflow:hidden;border:1px solid var(--line);box-shadow:var(--shadow-md)}
+  .part>.part-head{padding:26px 32px;color:#fff;display:flex;align-items:center;gap:18px}
+  .part.zero>.part-head{background:linear-gradient(120deg,#1e293b,#334155)}
+  .part.one>.part-head{background:linear-gradient(120deg,#0b5bd6,#3b8bff)}
+  .part.two>.part-head{background:linear-gradient(120deg,#7c3aed,#0e9f9f)}
+  .part.three>.part-head{background:linear-gradient(120deg,#1677ff,#0e9f9f)}
+  .part.four>.part-head{background:linear-gradient(120deg,#d97706,#f59e0b)}
+  .part-head .num{width:48px;height:48px;border-radius:12px;background:rgba(255,255,255,.16);display:grid;place-items:center;font-weight:800;font-size:20px;flex-shrink:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
+  .part-head h2{font-size:23px;letter-spacing:.3px}
+  .part-head .sub{font-size:14.5px;opacity:.88}
+  section.block{background:var(--card);padding:28px 34px;border-top:1px solid var(--line)}
+  section.block:first-child{border-top:0}
+  h3.sec{font-size:19px;margin-bottom:14px;display:flex;align-items:center;gap:10px;letter-spacing:.2px}
+  h3.sec::before{content:'';width:5px;height:19px;border-radius:3px;background:linear-gradient(180deg,var(--brand),#69b1ff)}
+  .part.two h3.sec::before,.part.three h3.sec::before{background:linear-gradient(180deg,var(--cyan),#5cdbd3)}
+  section.block p{color:#3d4a5f;margin-bottom:12px}
+  .lead{color:var(--muted)!important;font-size:16px}
+  code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:15px;background:var(--code-bg);padding:2px 8px;border-radius:5px;border:1px solid #dde7f3}
+  pre{background:#0d1526;color:#d7e3f4;padding:18px 20px;border-radius:12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14.5px;overflow-x:auto;line-height:1.7;margin:12px 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+  pre .c{color:#64748b}
+  .tbl-wrap{overflow-x:auto;margin:14px 0;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-sm)}
+  table{width:100%;border-collapse:collapse;font-size:16px;min-width:560px}
+  th{background:linear-gradient(180deg,#f1f6fd,#e9f1fb);text-align:left;padding:12px 16px;font-weight:700;color:#2b3a55;white-space:nowrap;border-bottom:1px solid var(--line)}
+  td{padding:12px 16px;border-top:1px solid #eef2f8;vertical-align:top}
+  tbody tr:nth-child(even) td{background:#fafcff}
+  tbody tr:hover td{background:#f0f7ff}
+  .flow{display:flex;align-items:stretch;margin:16px 0;flex-wrap:wrap}
+  .flow .node{flex:1;min-width:140px;background:linear-gradient(180deg,#f5f9ff,#eef5ff);border:1px solid #c4d9f8;border-radius:12px;padding:14px 16px;box-shadow:var(--shadow-sm)}
+  .flow .node b{display:block;color:var(--brand-dark);margin-bottom:4px;font-size:15.5px}
+  .flow .node small{color:var(--muted);font-size:13.5px;line-height:1.5}
+  .flow .arrow{align-self:center;color:var(--brand);font-weight:800;padding:0 8px;font-size:16px}
+  .flow.vertical{flex-direction:column;max-width:680px}
+  .flow.vertical .arrow{transform:rotate(90deg);align-self:center;padding:6px 0}
+  .tree{background:linear-gradient(180deg,#fbfcfe,#f6f9ff);border:1px solid var(--line);border-radius:14px;padding:20px;margin:14px 0;font-size:15.5px}
+  .tree .step{display:flex;gap:12px;align-items:flex-start;padding:8px 0}
+  .tree .n{width:26px;height:26px;border-radius:50%;background:linear-gradient(180deg,var(--brand),#2f7ff5);color:#fff;font-size:13.5px;display:grid;place-items:center;flex-shrink:0;margin-top:1px;box-shadow:0 2px 6px rgba(22,119,255,.35)}
+  .tree .ok{color:var(--green);font-weight:700}
+  .tree .full{color:var(--amber);font-weight:700}
+  .highlights{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin:14px 0}
+  .hl{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow-sm);transition:transform .15s ease,box-shadow .15s ease}
+  .hl:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
+  .hl h4{font-size:16.5px;color:var(--brand-dark);margin-bottom:8px}
+  .hl p{font-size:14.5px!important;color:#4a5668!important;margin:0!important}
+  .feature{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:14px 0}
+  .feat{background:#fff;border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:12px;padding:16px 20px;box-shadow:var(--shadow-sm);transition:transform .15s ease,box-shadow .15s ease}
+  .feat:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
+  .feat h4{font-size:16.5px;margin-bottom:6px;color:var(--ink)}
+  .feat p{font-size:14.5px!important;color:#4a5668!important;margin:0!important}
+  .feat .status{font-size:13px;color:var(--muted);margin-top:6px}
+  .pill{display:inline-block;padding:2px 12px;border-radius:12px;font-size:13.5px;font-weight:600;margin-right:6px}
+  .pill.b{background:#e6f4ff;color:#0b5bd6}
+  .pill.g{background:#ecfdf3;color:var(--green)}
+  .pill.a{background:#fff7e6;color:var(--amber)}
+  .pill.r{background:#fef2f2;color:var(--red)}
+  .pill.p{background:#f5f0ff;color:var(--purple)}
+  .pill.c{background:#e6fffb;color:var(--cyan)}
+  .qa{border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden;background:#fff}
+  .qa summary{padding:15px 20px;font-weight:600;font-size:16.5px;cursor:pointer;background:#fafcff;transition:background .15s ease}
+  .qa summary:hover{background:#f0f5ff}
+  .qa summary::marker{color:var(--brand)}
+  .qa .body{padding:8px 20px 18px;font-size:15.5px;color:#3d4a5f}
+  .qa .body ul{margin:8px 0 0 20px}
+  .step-demo{border-left:4px solid var(--cyan);background:linear-gradient(90deg,#fbfcfe,#fff);border-radius:0 12px 12px 0;padding:14px 20px;margin:12px 0;box-shadow:var(--shadow-sm)}
+  .step-demo b{color:var(--brand-dark);font-size:16px}
+  .step-demo .talk{color:#55637a;font-size:15px}
+  .to-top{position:fixed;right:26px;bottom:26px;width:46px;height:46px;border-radius:50%;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow-md);cursor:pointer;font-size:18px;color:var(--brand-dark);display:grid;place-items:center;opacity:.9;transition:opacity .2s}
+  .to-top:hover{opacity:1}
+  footer{text-align:center;color:var(--muted);font-size:14px;margin-top:60px}
+  @media (max-width:720px){
+    body{font-size:16px}
+    section.block{padding:22px 20px}
+    .part>.part-head{padding:20px 20px}
+    .hero h1{font-size:28px}
+    .highlights,.feature{grid-template-columns:1fr}
+  }
+  @media print{
+    body{background:#fff;font-size:14px}
+    .wrap{max-width:none}
+    header.hero,.part-head,th,.hl,.feat,.tree,.qa summary,.step-demo{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    nav.toc,.to-top{display:none}
+    .part{box-shadow:none}
+    .qa .body{display:block!important}
+  }</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="kicker">DEEPSEEK HARNESS · TEAM PLATFORM</div>
+  <h1>DSH 多租户平台 · 架构设计文档</h1>
+  <p>本地 DSH × 服务器 DSH：会话同步（过程归档）与多用户隔离（认证与数据边界）的完整技术设计</p>
+  <div class="tags">
+    <span class="tag">文件即真相</span>
+    <span class="tag">md5 增量校验</span>
+    <span class="tag">对账收敛</span>
+    <span class="tag">Token 不进浏览器</span>
+    <span class="tag">三层隔离</span>
+    <span class="tag">SSO 一次性 Ticket</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <span>目录：</span>
+  <a href="#part1">① Session 同步设计</a><span class="sep">·</span>
+  <a href="#sync-arch">架构</a><span class="sep">·</span>
+  <a href="#sync-flow">同步流程</a><span class="sep">·</span>
+  <a href="#sync-safe">安全与容错</a><span class="sep">·</span>
+  <a href="#sync-reconcile">对账</a><span class="sep">·</span>
+  <a href="#sync-evo">演进史</a><span class="sep">|</span>
+  <a href="#part2">② 多用户隔离设计</a><span class="sep">·</span>
+  <a href="#auth-arch">架构全景</a><span class="sep">·</span>
+  <a href="#auth-auth">认证细节</a><span class="sep">·</span>
+  <a href="#auth-isolate">隔离三层</a><span class="sep">·</span>
+  <a href="#auth-hl">技术亮点</a><span class="sep">·</span>
+  <a href="#auth-qa">面试追问</a>
+</nav>
+
+<!-- ═══════════════════ PART 1 ═══════════════════ -->
+<div class="part one" id="part1">
+  <div class="part-head">
+    <div class="num">1</div>
+    <div>
+      <h2>Session 同步设计</h2>
+      <div class="sub">多台本地 DSH 的会话过程记录 → 服务器归档 · 文件为真相 · 增量 + 验证 + 可重建</div>
+    </div>
+  </div>
+
+  <section class="block" id="sync-arch">
+    <h3 class="sec">两层模型：文件为真相，数据库为派生索引</h3>
+    <p class="lead">会话文件（多帧 zstd 压缩 JSONL）是官方持久化格式，可重放、格式版本化——它是权威。PG 只是派生索引：归属（真元数据）+ 同步标记（可从文件重算）。文件系统与数据库无法原子，因此采用「写路径尽力同步 + 对账兜底」——对象存储 / 事件溯源同款模式。</p>
+    <pre><span class="c">┌─ 本地 DSH（真相）─────────────┐   ┌─ 服务器（副本 + 索引）───────────────┐</span>
+│ session.jsonl.zstd          │   │ &lt;root&gt;/session.jsonl.zstd（DSH 原生） │
+│  （追加式事件日志）           │ ◄─┼ 字节增量 →                         │
+│                             │   │ PG team_session_log:               │
+│                             │   │   session_id / user_id（归属）      │
+│                             │   │   content_md5 + file_size（标记）   │
+└─────────────────────────────┘   └────────────────────────────────────┘</pre>
+  </section>
+
+  <section class="block">
+    <h3 class="sec">同步时机（四个触发点）</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>触发</th><th>时机</th><th>理由</th></tr>
+        <tr><td><span class="pill b">主</span>session/flush</td><td>DSH 持久化提交边界（turn/step 结束）</td><td>事件只在提交点落盘；频率=工作节奏，非每 chunk</td></tr>
+        <tr><td>session/created</td><td>新会话创建</td><td>立即注册归属</td></tr>
+        <tr><td>session/disposed</td><td>会话销毁</td><td>收尾不遗留</td></tr>
+        <tr><td>挂载/登录补传</td><td>重启 / 登录</td><td>对账历史会话（含冷会话）</td></tr>
+      </table>
+    </div>
+    <p class="lead">不用定时器（数据只在提交边界变）；不用事件级触发（每 chunk 太频繁）。</p>
+  </section>
+
+  <section class="block" id="sync-flow">
+    <h3 class="sec">单次同步流程</h3>
+    <div class="flow">
+      <div class="node"><b>① 拉取标记</b><small>GET status → { fileSize, contentMd5 }</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 本地算 md5</b><small>stat + 读文件指纹</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 决策</b><small>一致 / 前缀一致 / 无标记</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 上传</b><small>跳过 / 增量 / 全量替换</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>⑤ 更新标记</b><small>content_md5 + file_size</small></div>
+    </div>
+    <div class="tree">
+      <div class="step"><span class="n">③</span><div>完全一致（size + md5 都匹配）→ <span class="ok">跳过</span>（零传输）</div></div>
+      <div class="step"><span class="n">③</span><div>前缀一致（md5(本地[0..fileSize]) == 标记）→ <span class="ok">增量</span>：只传 [fileSize..末尾] + baseSize + baseMd5</div></div>
+      <div class="step"><span class="n">③</span><div>无标记 / 不一致 → <span class="full">全量替换</span>（tmp + rename 原子写）</div></div>
+    </div>
+    <p class="lead">每次同步前拉 server 标记（而非本地记）：本地内存崩溃即丢、压缩会重写文件；server 标记是唯一权威。</p>
+  </section>
+
+  <section class="block" id="sync-safe">
+    <h3 class="sec">安全性：为什么不会损坏</h3>
+    <div class="highlights">
+      <div class="hl"><h4>md5 前缀校验</h4><p>增量前证明本地前缀与 server 已存一致；不一致（压缩重写）改全量，绝不追加到错误基底。</p></div>
+      <div class="hl"><h4>server 双重校验</h4><p>增量携带 baseSize+baseMd5，与自身标记比对；不符 → 409 要求全量。</p></div>
+      <div class="hl"><h4>原子替换</h4><p>全量写临时文件 + rename，读方永远看不到半帧。</p></div>
+      <div class="hl"><h4>大小校验</h4><p>追加后 stat 文件 == totalSize，不符 → 409 重建。</p></div>
+      <div class="hl"><h4>版本门控</h4><p>header.version ≠ SESSION_FORMAT_VERSION → 415 fail-closed，格式演进保护。</p></div>
+    </div>
+    <p><span class="pill b">核心</span><b>任何异常 → 409 → 全量重传（幂等自愈）</b>——正确性永远由全量替换兜底，不存在死路。</p>
+  </section>
+
+  <section class="block">
+    <h3 class="sec">容错自愈</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>场景</th><th>行为</th></tr>
+        <tr><td>断网</td><td>失败 → 下次触发重试（替换幂等）</td></tr>
+        <tr><td>重启</td><td>补传拉标记 → 已同步跳过 / 部分增量 / 缺失全量</td></tr>
+        <tr><td>压缩重写本地文件</td><td>前缀 md5 不一致 → 全量</td></tr>
+        <tr><td>并发触发</td><td>每会话单飞锁（syncing）；server 409 兜底</td></tr>
+        <tr><td>server 换根 / 文件被清</td><td>补传标记不符 → 对账修复</td></tr>
+        <tr><td>单个文件损坏</td><td>对账删除 + client 重建；分析端点容错降级</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="sync-reconcile">
+    <h3 class="sec">对账（Reconcile）：文件变了，数据库跟着变</h3>
+    <div class="tree">
+      <div class="step"><span class="n">1</span><div>PG 有行、文件不存在 → <span class="full">删除该行</span>（存在性以文件为准）</div></div>
+      <div class="step"><span class="n">2</span><div>文件存在、PG 无行 → <span class="ok">孤儿</span>（记录，不删文件——无法自动定归属）</div></div>
+      <div class="step"><span class="n">3</span><div>标记与文件不符 → <span class="ok">以文件重建</span>（重算 md5 + size）</div></div>
+    </div>
+    <p class="lead">触发：<span class="pill b">server 启动自动</span> + <span class="pill b">管理后台手动按钮</span>。索引允许漂移但例行收敛——不是事务强一致，而是最终一致 + 对账。</p>
+  </section>
+
+  <section class="block" id="sync-evo">
+    <h3 class="sec">演进史：从复杂到简单（设计取舍）</h3>
+    <div class="flow vertical">
+      <div class="node"><b>v1 增量事件 + seq 游标 + 连续性校验</b><small>复杂度爆炸：游标跨根失效、压缩 seq 空洞、无限重试、崩溃窗口重复——每个机制都引入一类 bug</small></div>
+      <div class="arrow">↓</div>
+      <div class="node"><b>v2 整文件上传（替换）</b><small>简单正确，但 O(n²) 带宽：会话越长每次上传越大，100 人并发撑不住</small></div>
+      <div class="arrow">↓</div>
+      <div class="node"><b>v3 md5 校验的字节增量（最终）</b><small>日常 O(增量) 传输，任何异常回退全量；md5 指纹取代所有游标/连续性状态机</small></div>
+    </div>
+    <p><span class="pill p">认知</span><b>分布式同步的正确性 = 验证 + 幂等 + 可重建</b>，不是状态永远一致。</p>
+  </section>
+</div>
+
+<!-- ═══════════════════ PART 2 ═══════════════════ -->
+<div class="part two" id="part2">
+  <div class="part-head">
+    <div class="num">2</div>
+    <div>
+      <h2>多用户隔离设计</h2>
+      <div class="sub">Server 统一认证 · 凭证 Host 托管 · 数据按用户三层隔离 · 员工机器碰不到真密钥</div>
+    </div>
+  </div>
+
+  <section class="block" id="auth-arch">
+    <h3 class="sec">架构全景：两类消费者 × 两套认证 × 三层隔离</h3>
+    <pre><span class="c">① 认证层</span>
+   机器（本地 DSH Host）  → Bearer token   （Redis team:client-token · Host 托管）
+   浏览器（管理员）       → HttpOnly Cookie（Redis team:session · 浏览器自动携带）
+
+<span class="c">② 数据层</span>
+   team_session_log：session_id → user_id（跨用户冲突被 DB 约束拒绝）
+   文件为真相（session.jsonl.zstd 副本）+ PG 派生索引 + 对账兜底
+
+<span class="c">③ 接口层</span>
+   端点 Bearer → userId → 只允许操作自己的会话（403/404 区分）· 查询按 userId 过滤</pre>
+  </section>
+
+  <section class="block" id="auth-auth">
+    <h3 class="sec">认证细节</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>机制</th><th>载体</th><th>Redis key</th><th>生命周期</th><th>消费者</th></tr>
+        <tr><td>机器认证</td><td>Bearer token</td><td>team:client-token:*</td><td>固定 7 天</td><td>本地 DSH（网关/同步/水合）</td></tr>
+        <tr><td>浏览器会话</td><td>HttpOnly Cookie</td><td>team:session:*</td><td>滑动续期</td><td>管理员（后台/入口）</td></tr>
+        <tr><td>SSO 桥接</td><td>一次性 code</td><td>team:admin-ticket:*</td><td>30 秒、消费即删</td><td>浏览器跳转（免密进后台）</td></tr>
+      </table>
+    </div>
+    <h3 class="sec" style="margin-top:16px">登录流程（本地 DSH）</h3>
+    <div class="flow">
+      <div class="node"><b>浏览器提交账号密码</b><small>POST /team/login</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>Host 转发 server</b><small>校验 PG 账号</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>建 Redis 记录</b><small>返回 token</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>Host 拦截 token</b><small>credentials + 内存</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>浏览器只见 user</b><small>token 永不出 Host</small></div>
+    </div>
+    <h3 class="sec" style="margin-top:16px">SSO ticket 桥接（机器身份 → 浏览器身份）</h3>
+    <div class="flow">
+      <div class="node"><b>点头像</b><small>Host 拿 token 换 code</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>一次性 code</b><small>30 秒 · 消费即删</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>浏览器跳 server 消费</b><small>种管理员 Cookie</small></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>进管理后台</b><small>免二次登录</small></div>
+    </div>
+    <p class="lead">code 只能换一个新会话、不能调任何 API；即使出现在浏览器历史，过期即废。</p>
+  </section>
+
+  <section class="block" id="auth-isolate">
+    <h3 class="sec">隔离的三层落实</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>层次</th><th>机制</th></tr>
+        <tr><td><span class="pill b">存储层</span></td><td>归属绑定约束：INSERT ... ON CONFLICT DO UPDATE ... WHERE user_id = EXCLUDED.user_id → 跨用户改写不可能</td></tr>
+        <tr><td><span class="pill g">查询层</span></td><td>listOwnSessions(userId) 按 userId 过滤；管理端才可见全量</td></tr>
+        <tr><td><span class="pill a">接口层</span></td><td>每个 /team/api/* 先 Bearer → userId → 再查归属 → 403（非本人）/ 404（不存在）</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="auth-hl">
+    <h3 class="sec">五个技术亮点</h3>
+    <div class="highlights">
+      <div class="hl"><h4>Token 永不进浏览器</h4><p>凭证只存在于 Host 进程（credentials 文件 + 内存），不进 devtools / 历史 / localStorage，泄露面最小化。</p></div>
+      <div class="hl"><h4>两套认证 = 两类消费者</h4><p>机器要可携带的 Bearer，浏览器要自动携带的 Cookie；合并会暴露 token 或需嗅探调用方。</p></div>
+      <div class="hl"><h4>SSO 短命 code 桥接</h4><p>泄露窗口从 7 天（token）缩到 30 秒（code），用途单一、消费即删——OAuth2 authorization code 同款。</p></div>
+      <div class="hl"><h4>模型网关凭证代换</h4><p>公司 token → server 内部换真 DEEPSEEK_API_KEY → 流式转发，真 key 不出 server。</p></div>
+      <div class="hl"><h4>隔离靠 DB 约束而非信任</h4><p>跨用户操作在存储层被拒绝，不是客户端自觉。</p></div>
+    </div>
+  </section>
+
+  <section class="block" id="auth-qa">
+    <h3 class="sec">面试追问要点</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>问题</th><th>回答</th></tr>
+        <tr><td>为什么不共享 Cookie？</td><td>生产环境 client=127.0.0.1、server=公司域名，Cookie 跨域不共享，SameSite/Secure 全踩坑</td></tr>
+        <tr><td>为什么不用 JWT？</td><td>Redis 会话可服务端撤销、可滑动续期、O(1) 校验；JWT 无状态但撤销要黑名单</td></tr>
+        <tr><td>隔离在哪几层？</td><td>存储（约束）→ 查询（过滤）→ 接口（鉴权）三层</td></tr>
+        <tr><td>为什么不用加盐 md5？</td><td>内容指纹非秘密，盐是密码哈希概念；加盐会破坏对账重算比对</td></tr>
+        <tr><td>已知取舍？</td><td>明文密码、token 未哈希、禁用不即时生效——识别了风险，按 MVP 优先级后置</td></tr>
+      </table>
+    </div>
+  </section>
+</div>
+
+<footer>
+  DeepSeek Harness · Team Platform 架构设计 · 本地 DSH × 服务器 DSH · 2026
+</footer>
+
+</div>
+<button class="to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="回到顶部">↑</button>
+</body>
+</html>
