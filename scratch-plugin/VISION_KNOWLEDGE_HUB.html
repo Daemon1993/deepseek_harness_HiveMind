@@ -156,10 +156,10 @@
   <div class="part-head"><div class="num">2</div><div><h2>逐层详解</h2><div class="sub">每层要做什么 · 可行性 · 产出物</div></div></div>
 
   <section class="block">
-    <h3 class="sec">① 采集层（已有基础，正在完成）</h3>
+    <h3 class="sec">① 采集层（已完成）</h3>
     <div class="tbl-wrap"><table>
       <tr><th>数据</th><th>内容</th><th>状态</th></tr>
-      <tr><td>Session 日志</td><td>用户消息、工具调用、模型对话、token、时间线（本地完整归档 + 服务器副本）</td><td><span class="pill g">✅ 完成</span></td></tr>
+      <tr><td>Session 日志</td><td>用户消息（含图片/多模态，经 Files API 代理 files-first 归档）、工具调用、模型对话、token、时间线（本地完整归档 + 服务器副本）</td><td><span class="pill g">✅ 完成</span></td></tr>
       <tr><td>Git 操作</td><td>操作流水（谁/哪会话/哪项目/动作/成败）</td><td><span class="pill g">✅ Step 1</span></td></tr>
       <tr><td>代码变更</td><td>commit hash + 文件数 + 增删行（幂等）</td><td><span class="pill g">✅ Step 1</span></td></tr>
       <tr><td>diff 内容层（远期）</td><td>文件路径列表 + 摘要（不存 diff 内容）</td><td><span class="pill a">📋 规划</span></td></tr>
