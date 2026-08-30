@@ -212,7 +212,7 @@
     <div class="feature">
       <div class="feat"><h4>统一认证</h4><p>管理员 Cookie + 本地 DSH Bearer；token Host 托管</p><div class="status">✅</div></div>
       <div class="feat"><h4>SSO 免密进后台</h4><p>30 秒一次性 ticket 桥接</p><div class="status">✅</div></div>
-      <div class="feat"><h4>模型网关</h4><p>token 换真 key、无缓冲流式</p><div class="status">✅</div></div>
+      <div class="feat"><h4>模型网关</h4><p>chat 透传 + Files API 代理 · client 选模型即生效</p><div class="status">✅</div></div>
       <div class="feat"><h4>Session 归档</h4><p>字节增量 + md5 + 对账</p><div class="status">✅</div></div>
       <div class="feat"><h4>Git/变更同步</h4><p>commit 元数据 + diff stat</p><div class="status">✅</div></div>
       <div class="feat"><h4>管理后台</h4><p>分析/洞察/归属/同步状态</p><div class="status">✅</div></div>
@@ -260,7 +260,7 @@
     <div class="tree">
       <div class="step"><span class="n">①</span><div>打开 3080 → 守卫脚本查 /team/session → 未登录 → 跳登录页</div></div>
       <div class="step"><span class="n">②</span><div>登录：浏览器提交账号密码 → Host 转发 server → 校验发 token → Host 拦截 → 浏览器只见 user</div></div>
-      <div class="step"><span class="n">③</span><div>干活：模型请求走网关（token 换真 key 流式返回）；工具本地执行</div></div>
+      <div class="step"><span class="n">③</span><div>干活：模型请求走网关（token 换真 key 流式返回）；图片走 /files 代理（files-first，失败降级 base64）；工具本地执行</div></div>
       <div class="step"><span class="n">④</span><div>turn 结束（session/flush）→ 拉标记 → md5 比对 → 增量/全量 → server 校验落盘 + 更新标记</div></div>
       <div class="step"><span class="n">⑤</span><div>commit 代码 → tools/post-execute 检测 → 上传操作 + diff stat（含 sessionId）</div></div>
       <div class="step"><span class="n">⑥</span><div>管理员看后台：分析/洞察/归属/同步状态（从 PG + 文件聚合）</div></div>
@@ -290,7 +290,7 @@
       <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">① 完全一致 → 跳过（零传输）</span></div>
       <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">② 前缀一致 → 增量 + baseSize + baseMd5 → 校验追加 → stat 校验 size</span></div>
       <div class="seq-row"><span class="seq-from">本地 DSH</span><span class="seq-arrow">→</span><span class="seq-to">Server</span><span class="seq-msg">③ 无标记/不一致 → 全量（tmp + rename 原子替换）</span></div>
-      <div class="seq-note">Server 更新 content_md5 + file_size → 下次以此为基准</div>
+      <div class="seq-note">全量落盘后 inspect 首帧校验（失败 → 删文件 + 清标记 + 拒绝）；通过后更新 content_md5 + file_size → 下次以此为基准</div>
     </div>
   </section>
 </div>
@@ -323,10 +323,12 @@
       <tr><td>/team/login-page · /team/admin · /team/sync/status · /team/sync/now</td><td>—</td><td>登录页 / SSO / 同步状态 / 手动触发</td></tr>
       <tr><td colspan="2" style="color:var(--muted)">守卫脚本注入 index.html（隐藏 + 跳转）</td></tr>
       <tr><td rowspan="5"><span class="pill p">Server API</span></td><td>/team/api/login · /team/api/session</td><td>— / Bearer</td><td>登录发 token · 水合</td></tr>
-      <tr><td>/team/api/model/chat/completions</td><td>Bearer</td><td>模型网关</td></tr>
+      <tr><td>/team/api/model/chat/completions</td><td>Bearer</td><td>模型网关（chat 透传，client 选模型即生效）</td></tr>
+      <tr><td>/team/api/model/files · /files/:id</td><td>Bearer</td><td>Files API 代理（上传/列表/读取/删除）</td></tr>
       <tr><td>/team/api/sync/session · /session/status · /sessions</td><td>Bearer</td><td>上传 / 拉标记 / 拉列表</td></tr>
       <tr><td>/team/api/git/ops · /git/changes</td><td>Bearer</td><td>Git / 变更上传</td></tr>
       <tr><td>/team/api/admin-ticket · /team/admin/consume</td><td>Bearer / —</td><td>SSO code 换发与消费</td></tr>
+      <tr><td><span class="pill b">根路径</span>/ · /?workspace=1</td><td>Cookie</td><td>server 端重定向：已登录→后台 / 未登录→登录页；?workspace=1 仅 admin → /team/workspace</td></tr>
       <tr><td rowspan="3"><span class="pill g">Server Admin</span></td><td>/team/login · /session · /logout · /apply</td><td>—</td><td>管理员登录态 / 申请</td></tr>
       <tr><td>/team/admin · /users · /sessions · /analytics · /insights</td><td>admin</td><td>后台页面与接口</td></tr>
       <tr><td>/team/admin/sync-status · /sync/reconcile</td><td>admin</td><td>同步状态 · 对账</td></tr>
@@ -341,7 +343,7 @@
       <tr><td>team_audit_logs</td><td>审计：level/event/source/user/session/details JSONB</td></tr>
       <tr><td>team_git_ops</td><td>Git 操作流水</td></tr>
       <tr><td>team_code_changes</td><td>代码变更：commit_hash UNIQUE（幂等键）</td></tr>
-      <tr><td>team_session_owners</td><td>旧归属表（遗留）</td></tr>
+      <tr><td>team_session_owners</td><td>旧归属表（启动时 DROP）</td></tr>
       <tr><td rowspan="3"><span class="pill p">Redis</span></td><td>team:session:*</td><td>管理员 Cookie（7 天滑动）</td></tr>
       <tr><td>team:client-token:*</td><td>本地 DSH Bearer（7 天固定）</td></tr>
       <tr><td>team:admin-ticket:*</td><td>SSO 一次性 code（30 秒）</td></tr>
@@ -380,15 +382,21 @@
       <div class="node"><b>流式转发</b><small>无缓冲 · 10min · 50MB</small></div>
     </div>
     <p class="lead">最小侵入：本地 Agent Loop / 工具 / 流式行为零改动，只改配置层。</p>
+    <div class="tree">
+      <div class="step"><span class="n">①</span><div><b>模型由 client 决定</b>：client 工作台选择器选模型 → 请求体带 model → 网关<b>原样透传</b>（不覆盖、不映射），DeepSeek 按 client 选的模型执行</div></div>
+      <div class="step"><span class="n">②</span><div><b>图片 files-first</b>：client 先 POST /files 上传（multipart raw 透传，不解析）→ 拿 file-id → chat 里引用；上传失败自动降级 base64 内联</div></div>
+      <div class="step"><span class="n">③</span><div>网关日志/审计带 <b>model 字段</b>：每次请求可追溯用了哪个模型（管理后台模型消耗图同源）</div></div>
+    </div>
   </section>
   <section class="block">
     <h3 class="sec">5.3 Session 归档同步</h3>
     <div class="tree">
       <div class="step"><span class="n">①</span><div>拉取 server 标记 GET status → { fileSize, contentMd5 }</div></div>
-      <div class="step"><span class="n">②</span><div>本地 stat + 读文件算 md5</div></div>
+      <div class="step"><span class="n">②</span><div>本地 stat + 读文件算 md5；<b>读后复检大小</b>——文件正在被写则跳过本轮（防半写上传）</div></div>
       <div class="step"><span class="n">③</span><div>完全一致 → <span class="ok">跳过</span>（零传输）</div></div>
-      <div class="step"><span class="n">④</span><div>前缀一致 → <span class="ok">增量</span>（baseSize+baseMd5，server 校验后追加 + size 校验）</div></div>
+      <div class="step"><span class="n">④</span><div>前缀一致 → <span class="ok">增量</span>（baseSize+baseMd5；server 先确认目标文件存在再追加 + size 校验）</div></div>
       <div class="step"><span class="n">⑤</span><div>无标记 / 不一致 → <span class="full">全量替换</span>（tmp + rename）</div></div>
+      <div class="step"><span class="n">⑥</span><div>全量落盘后 <b>inspect 首帧校验</b>：首帧必须是合法会话头，否则删文件 + 清标记 + 拒绝（无头文件永不入库）</div></div>
     </div>
     <p>触发：session/flush（主）· created · disposed · 补传。每会话单飞锁。</p>
   </section>
@@ -468,7 +476,7 @@
 
 <!-- 8 演进踩坑 -->
 <div class="part one" id="p8">
-  <div class="part-head"><div class="num">8</div><div><h2>演进与踩坑记录</h2><div class="sub">三版迭代 + 六个关键坑</div></div></div>
+  <div class="part-head"><div class="num">8</div><div><h2>演进与踩坑记录</h2><div class="sub">三版迭代 + 九个关键坑</div></div></div>
   <section class="block">
     <h3 class="sec">Session 同步三版迭代</h3>
     <div class="flow vertical">
@@ -488,6 +496,9 @@
       <tr><td>patch 的 disabled 禁用被覆盖的目标行本身</td><td>patch 字段直接覆盖目标行；守卫放表达式内</td></tr>
       <tr><td>换根后 PG 标记指向旧根 → 补传全跳过</td><td>标记是派生的，换根必须对账或重置</td></tr>
       <tr><td>坏文件让 sessionController.list() 抛错 → 分析 400</td><td>端点容错降级 + 对账清理 + size 校验</td></tr>
+      <tr><td>无头文件（首帧非 session header）→ 启动即崩、上传即坏</td><td>全量上传后 inspect 首帧校验：拒绝 + 清标记，无头文件永不入库</td></tr>
+      <tr><td>同步读文件撞上 DSH 正在写（半写/截断）→ 上传损坏内容</td><td>client 读后复检大小，变化则跳过本轮（下次 flush 再试）</td></tr>
+      <tr><td>全量被拒但标记未清 → "有标记无文件"分歧</td><td>拒绝时同时清 PG 标记（clearSessionMarker）</td></tr>
       <tr><td>grep -c "error" 匹配不到 ERROR → 假"构建通过"</td><td>node --check + 正确 tsc grep</td></tr>
     </table></div>
   </section>
@@ -510,7 +521,9 @@
     <details class="quiz"><summary>8. 为什么两套认证不合并？合并会怎样？</summary><div class="body">合并 = 要么浏览器拿到 token（暴露）、要么 server 嗅探调用方（脆弱）。机器要可携带 Bearer、浏览器要自动 Cookie，交付方式不同。</div></details>
     <h3 class="sec">陷阱层（能说出坑吗）</h3>
     <details class="quiz"><summary>9. 换根后为什么同步会"全跳过"？怎么修？</summary><div class="body">PG 标记指向旧根文件，client 拉到的 md5 与本地一致 → 跳过 → 新根永远空。修：对账（清标记/删行）强制全量重建，或换根时重置标记。</div></details>
-    <details class="quiz"><summary>10. 为什么一个坏文件能拖垮整个分析端点？防御是什么？</summary><div class="body">sessionController.list() 读到坏文件（首帧非 header）直接抛错 → 端点 400 空响应。防御：端点容错降级 + 对账清理 + 增量后 size 校验防未来损坏。</div></details>
+    <details class="quiz"><summary>10. 为什么一个坏文件能拖垮整个分析端点？防御是什么？</summary><div class="body">sessionController.list() 读到坏文件（首帧非 header）直接抛错 → 端点 400 空响应。防御：端点容错降级 + 对账清理 + 全量上传后 inspect 首帧校验防未来损坏。</div></details>
+    <details class="quiz"><summary>11. 图片请求在网关里怎么走？模型由谁决定？</summary><div class="body">client files-first：POST /files（multipart raw 透传，不解析）→ 拿 file-id → chat 引用。模型由 client 选择器决定，请求体带 model，网关原样透传不覆盖——client 与 server 模型配置各自独立，两边都是 DSH 所以模型名一致。</div></details>
+    <details class="quiz"><summary>12. 无头会话文件怎么被拦住？拒绝后状态如何一致？</summary><div class="body">全量上传后 server inspect 校验首帧（必须恰好一行 session header）；失败 → 删文件 + 清 PG 标记 + 400。client 读文件时复检大小，半写状态跳过本轮——从源头避免发出损坏内容。</div></details>
   </section>
 </div>
 
@@ -536,6 +549,7 @@
     <details class="qa"><summary>为什么用 md5 不用 size+mtime？</summary><div class="body"><p>size+mtime 可能漏判「同大小同 mtime 内容变了」（压缩重写）。md5 内容级精确。注意：这里是内容指纹不是秘密，不加盐；加盐是密码哈希概念，且会破坏对账重算比对。</p></div></details>
     <details class="qa"><summary>增量同步怎么保证不损坏？</summary><div class="body"><p>三重校验：① client 增量前 md5 证明前缀一致；② server 用 baseSize+baseMd5 与自身标记比对；③ 追加后 stat 校验大小 == totalSize。任何失败 → 409 → 全量替换（幂等）。</p></div></details>
     <details class="qa"><summary>为什么 token 不进浏览器？两套认证为什么不合并？</summary><div class="body"><p>token 进浏览器 = 暴露在 devtools/历史/localStorage。合并 = 浏览器拿 token（违反底线）或嗅探调用方（脆弱）。机器要 Bearer、浏览器要 Cookie，交付方式不同。</p></div></details>
+    <details class="qa"><summary>为什么网关要代理 Files API？模型谁决定？</summary><div class="body"><p>client 的 llm-deepseek 默认 files-first（上传→file-id→chat 引用）。网关只代理 chat 会让 /files 404 → 每次降级 base64（可用但费带宽、大图受限）。代理 /files（multipart raw 透传）后，client 走网关与直连 DeepSeek 行为完全一致；上传失败仍自动降级 base64 兜底。模型由 client 选择器决定、请求体透传——网关只换 key，不替 client 选模型。</p></div></details>
     <details class="qa"><summary>为什么用 SSO ticket 而不是直接传 token？</summary><div class="body"><p>长命 token 跨边界泄露窗口 7 天；30 秒一次性 code 泄露即废、用途单一、消费即删——OAuth2 authorization code 标准做法。</p></div></details>
     <details class="qa"><summary>数据隔离落实在哪几层？</summary><div class="body"><p>三层：存储（DB 归属约束，跨用户改写不可能）→ 查询（userId 过滤）→ 接口（Bearer→userId→归属校验，403/404 区分）。</p></div></details>
     <details class="qa"><summary>为什么不用 JWT？</summary><div class="body"><p>Redis 会话可服务端撤销、可滑动续期、O(1) 校验；JWT 无状态但撤销要黑名单，复杂度转移。</p></div></details>
