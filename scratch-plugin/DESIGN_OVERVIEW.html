@@ -197,7 +197,7 @@
     <div class="tree">
       <div class="step"><span class="n">③</span><div>完全一致（size + md5 都匹配）→ <span class="ok">跳过</span>（零传输）</div></div>
       <div class="step"><span class="n">③</span><div>前缀一致（md5(本地[0..fileSize]) == 标记）→ <span class="ok">增量</span>：只传 [fileSize..末尾] + baseSize + baseMd5</div></div>
-      <div class="step"><span class="n">③</span><div>无标记 / 不一致 → <span class="full">全量替换</span>（tmp + rename 原子写）</div></div>
+      <div class="step"><span class="n">③</span><div>无标记 / 不一致 → <span class="full">全量替换</span>（tmp + rename 原子写）→ 落盘后 inspect 首帧校验，失败则删文件 + 清标记</div></div>
     </div>
     <p class="lead">每次同步前拉 server 标记（而非本地记）：本地内存崩溃即丢、压缩会重写文件；server 标记是唯一权威。</p>
   </section>
@@ -210,6 +210,8 @@
       <div class="hl"><h4>原子替换</h4><p>全量写临时文件 + rename，读方永远看不到半帧。</p></div>
       <div class="hl"><h4>大小校验</h4><p>追加后 stat 文件 == totalSize，不符 → 409 重建。</p></div>
       <div class="hl"><h4>版本门控</h4><p>header.version ≠ SESSION_FORMAT_VERSION → 415 fail-closed，格式演进保护。</p></div>
+      <div class="hl"><h4>首帧校验</h4><p>全量落盘后 inspect：首帧必须恰好一行 session header；否则删文件 + 清标记 + 拒绝——无头文件永不入库，启动/列表不再被拖崩。</p></div>
+      <div class="hl"><h4>读稳定性</h4><p>client 读文件后复检大小：DSH 正在写（半写/截断）则跳过本轮，损坏内容从源头不出门。</p></div>
     </div>
     <p><span class="pill b">核心</span><b>任何异常 → 409 → 全量重传（幂等自愈）</b>——正确性永远由全量替换兜底，不存在死路。</p>
   </section>
@@ -224,7 +226,8 @@
         <tr><td>压缩重写本地文件</td><td>前缀 md5 不一致 → 全量</td></tr>
         <tr><td>并发触发</td><td>每会话单飞锁（syncing）；server 409 兜底</td></tr>
         <tr><td>server 换根 / 文件被清</td><td>补传标记不符 → 对账修复</td></tr>
-        <tr><td>单个文件损坏</td><td>对账删除 + client 重建；分析端点容错降级</td></tr>
+        <tr><td>单个文件损坏（无头/半写）</td><td>上传被首帧校验拒绝 + 清标记 → client 下次全量重建；client 读稳定复检防半写</td></tr>
+        <tr><td>增量基准在、文件却没了</td><td>增量前 server 确认目标文件存在，缺失 → 409 全量（防增量重建出无头文件）</td></tr>
       </table>
     </div>
   </section>
@@ -246,7 +249,7 @@
       <div class="arrow">↓</div>
       <div class="node"><b>v2 整文件上传（替换）</b><small>简单正确，但 O(n²) 带宽：会话越长每次上传越大，100 人并发撑不住</small></div>
       <div class="arrow">↓</div>
-      <div class="node"><b>v3 md5 校验的字节增量（最终）</b><small>日常 O(增量) 传输，任何异常回退全量；md5 指纹取代所有游标/连续性状态机</small></div>
+      <div class="node"><b>v3 md5 校验的字节增量（最终）</b><small>日常 O(增量) 传输，任何异常回退全量；md5 指纹取代所有游标/连续性状态机；全量后首帧校验 + client 读稳定复检兜底</small></div>
     </div>
     <p><span class="pill p">认知</span><b>分布式同步的正确性 = 验证 + 幂等 + 可重建</b>，不是状态永远一致。</p>
   </section>
