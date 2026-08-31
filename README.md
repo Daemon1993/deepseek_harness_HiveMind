@@ -155,3 +155,7 @@ cd scratch-plugin/team-server
 cd scratch-plugin/team-client
 ./start-local.ps1
 ```
+
+### 默认账号
+
+`team-server/src/users.json` 播种：`hahame/a123456`（admin）、`liu/123456`、`zhang/123456`（developer）。
