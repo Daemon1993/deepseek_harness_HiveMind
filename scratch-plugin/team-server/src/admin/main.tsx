@@ -465,6 +465,8 @@ function ProjectDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail)
     { title: '项目', render: (_, project) => <div><Typography.Text strong>{project.name}</Typography.Text><Typography.Text code copyable={{ text: project.gitRemote }} type="secondary" className="blockText analyticsPath">{project.gitRemote}</Typography.Text></div> },
     { title: '成员', dataIndex: 'users', width: 75 },
     { title: '会话', dataIndex: 'sessions', width: 75 },
+    { title: '提交', dataIndex: 'commits', width: 70, render: value => value === 0 ? '—' : value },
+    { title: '代码增删', width: 120, render: (_, project) => project.commits === 0 ? '—' : <span><Typography.Text type="success">+{project.insertions}</Typography.Text> <Typography.Text type="danger">-{project.deletions}</Typography.Text></span> },
     { title: '消息', dataIndex: 'messages', width: 75 },
     { title: '模型请求', dataIndex: 'modelRequests', width: 100 },
     { title: 'Token', dataIndex: 'totalTokens', width: 110, render: fmtNum },
