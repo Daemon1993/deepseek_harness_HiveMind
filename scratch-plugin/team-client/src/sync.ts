@@ -16,7 +16,8 @@ const COMPANY_TOKEN_REF = credentialRef('TEAM_COMPANY_TOKEN')
 
 /** 单次上传上限（全量替换时超过则跳过并告警一次）。 */
 const MAX_LOG_BYTES = 50 * 1024 * 1024
-const SYNC_DEBOUNCE_MS = 500
+const SYNC_DEBOUNCE_MS = 3_000
+const SYNC_RETRY_MS = 10_000
 
 function md5Of(bytes: Buffer | Uint8Array): string {
   return createHash('md5').update(bytes).digest('hex')
@@ -43,25 +44,42 @@ function findGitProject(cwd: string | undefined): Promise<GitProject | undefined
   return pending
 }
 
-function syncLog(level: 'warn', message: string): void {
+function syncLog(level: 'info' | 'warn', message: string): void {
   const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [team-client.sync] ${message}`
-  console.warn(line)
+  if (level === 'warn') console.warn(line)
+  else console.info(line)
 }
 
 /** 订阅本地 Session 生命周期，把每个会话的日志增量/全量同步到 server。 */
 export function registerSessionSync(ctx: Context, serverURL: string): void {
-  const scheduler = new SessionSyncScheduler(SYNC_DEBOUNCE_MS)
-  ctx.effect(() => async () => scheduler.dispose(), 'team-client.session-sync')
+  const scheduler = new SessionSyncScheduler(SYNC_DEBOUNCE_MS, SYNC_RETRY_MS)
   const warned = new Set<string>()
   const warnOnce = (key: string, message: string): void => {
     if (warned.has(key)) return
     warned.add(key)
     syncLog('warn', message)
   }
+  const reportedSync = new Set<string>()
   // 同步状态（浏览器端通过 /team/sync/status 轮询展示）
   let inFlight = 0
   let lastSyncAt = 0
-  const syncStatus = { syncing: false, lastSyncAt: 0, lastSyncedSession: '' }
+  const syncStatus = {
+    syncing: false,
+    lastSyncAt: 0,
+    lastSyncedSession: '',
+    flushEvents: 0,
+    lastFlushAt: 0,
+    lastFlushSession: '',
+    syncAttempts: 0,
+    lastAttemptAt: 0,
+    lastAttemptSession: '',
+    lastErrorAt: 0,
+    lastError: '',
+  }
+  const markError = (message: string): void => {
+    syncStatus.lastErrorAt = Date.now()
+    syncStatus.lastError = message
+  }
   const markSyncing = (active: boolean): void => {
     inFlight = Math.max(0, inFlight + (active ? 1 : -1))
     syncStatus.syncing = inFlight > 0
@@ -69,6 +87,16 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
   ctx.webServer.register({ kind: 'exact', path: '/team/sync/status', handler(_req, res) {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
     res.end(JSON.stringify(syncStatus))
+  } })
+  ctx.webServer.register({ kind: 'exact', path: '/team/sync/now', handler(req, res) {
+    if (req.method !== 'POST') {
+      res.writeHead(405)
+      res.end()
+      return
+    }
+    void backfill()
+    res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ ok: true }))
   } })
   const authHeaders = async (): Promise<Record<string, string> | undefined> => {
     const credential = await ctx.credentials.resolve(COMPANY_TOKEN_REF)
@@ -82,11 +110,14 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
     bytes: Buffer,
     baseSize: number | undefined,
     baseMd5: string | undefined,
-  ): Promise<boolean> => {
+  ): Promise<'synced' | 'conflict' | 'retry' | 'failed'> => {
     const contentMd5 = md5Of(bytes)
     const delta = baseSize === undefined ? bytes : bytes.subarray(baseSize)
     const headers = await authHeaders()
-    if (headers === undefined) return false // 未登录：静默，登录后下次触发再传
+    if (headers === undefined) {
+      markError('TEAM_COMPANY_TOKEN is unavailable')
+      return 'retry'
+    }
     const gitProject = await findGitProject(header.cwd)
     markSyncing(true)
     try {
@@ -104,26 +135,51 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
           ...(baseSize === undefined || baseMd5 === undefined ? {} : { baseSize, baseMd5 }),
         }),
       })
-      if (response.status === 409) return false // 基准不匹配：调用方回退全量
+      if (response.status === 409) return 'conflict'
       if (!response.ok) {
-        warnOnce(`${sessionId}:upload`, `session upload failed status=${response.status} session=${sessionId}`)
-        return true // 已尝试，标记完成避免无限重试；下次触发再试
+        const detail = await response.text().catch(() => '')
+        let reason: unknown
+        try {
+          reason = (JSON.parse(detail) as { reason?: unknown }).reason
+        } catch {
+          reason = undefined
+        }
+        if (response.status === 400 && reason === 'content-mismatch'
+          && baseSize !== undefined && baseMd5 !== undefined) return 'conflict'
+        const message = `session upload failed status=${response.status} session=${sessionId}${detail === '' ? '' : `: ${detail}`}`
+        markError(message)
+        warnOnce(`${sessionId}:upload`, message)
+        return response.status === 408 || response.status === 429 || response.status >= 500 ? 'retry' : 'failed'
       }
       lastSyncAt = Date.now()
       syncStatus.lastSyncAt = lastSyncAt
       syncStatus.lastSyncedSession = sessionId
-      return true
+      syncStatus.lastErrorAt = 0
+      syncStatus.lastError = ''
+      warned.delete(`${sessionId}:upload`)
+      warned.delete(`${sessionId}:read`)
+      if (!reportedSync.has(sessionId)) {
+        reportedSync.add(sessionId)
+        syncLog('info', `session synced sid=${sessionId.slice(0, 8)} mode=${baseSize === undefined ? 'full' : 'delta'}`)
+      }
+      return 'synced'
+    } catch (error) {
+      const message = `session upload failed session=${sessionId}: ${String(error)}`
+      markError(message)
+      warnOnce(`${sessionId}:upload`, message)
+      return 'retry'
     } finally {
       markSyncing(false)
     }
   }
 
-  const uploadFull = async (sessionId: string, header: SessionHeader, bytes: Buffer): Promise<void> => {
+  const uploadFull = async (sessionId: string, header: SessionHeader, bytes: Buffer): Promise<boolean> => {
     if (bytes.byteLength > MAX_LOG_BYTES) {
       warnOnce(`${sessionId}:too-large`, `session log too large (${bytes.byteLength} bytes), sync skipped: ${sessionId}`)
-      return
+      return true
     }
-    await upload(sessionId, header, bytes, undefined, undefined)
+    const result = await upload(sessionId, header, bytes, undefined, undefined)
+    return result === 'synced' || result === 'failed'
   }
 
   /** 每次同步前从 server 拉取该会话的已存状态（位置+指纹）。 */
@@ -133,61 +189,99 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
     try {
       const response = await fetch(`${serverURL}/team/api/sync/session/status?sessionId=${encodeURIComponent(sessionId)}`, { headers })
       if (!response.ok) return undefined
-      const data = await response.json() as { has: boolean; fileSize?: number; contentMd5?: string; projectRoot?: string; gitRemote?: string }
+      const data = await response.json() as { has: boolean; fileSize?: unknown; contentMd5?: string; projectRoot?: string; gitRemote?: string }
+      const parsedFileSize = typeof data.fileSize === 'number'
+        ? data.fileSize
+        : typeof data.fileSize === 'string' && /^\d+$/u.test(data.fileSize)
+          ? Number(data.fileSize)
+          : undefined
+      const fileSize = parsedFileSize !== undefined && Number.isSafeInteger(parsedFileSize)
+        ? parsedFileSize
+        : undefined
       return data.has
-        ? { ...(data.fileSize === undefined ? {} : { fileSize: data.fileSize }), ...(data.contentMd5 === undefined ? {} : { contentMd5: data.contentMd5 }), ...(data.projectRoot === undefined ? {} : { projectRoot: data.projectRoot }), ...(data.gitRemote === undefined ? {} : { gitRemote: data.gitRemote }) }
+        ? { ...(fileSize === undefined ? {} : { fileSize }), ...(data.contentMd5 === undefined ? {} : { contentMd5: data.contentMd5 }), ...(data.projectRoot === undefined ? {} : { projectRoot: data.projectRoot }), ...(data.gitRemote === undefined ? {} : { gitRemote: data.gitRemote }) }
         : undefined
     } catch {
       return undefined
     }
   }
 
-  const syncSession = async (sessionId: string, header: SessionHeader): Promise<void> => {
+  const syncSession = async (sessionId: string, header: SessionHeader): Promise<boolean> => {
+    syncStatus.syncAttempts += 1
+    syncStatus.lastAttemptAt = Date.now()
+    syncStatus.lastAttemptSession = sessionId
     try {
       const location = ctx.sessionPersistence.locate(header)
-      if (location === undefined) return
+      if (location === undefined) return true
       const info = await stat(location.path).catch(() => undefined)
-      if (info === undefined) return // 文件尚未落盘（首个事件未提交）
+      if (info === undefined) return true // 文件尚未落盘（首个事件未提交）
       const bytes = await readFile(location.path)
       // 稳定性校验：读取期间文件大小变化（DSH 正在追加/截断）则跳过本轮，
       // 下次 flush 会重试——避免把半写的文件全量上传到 server。
       const after = await stat(location.path).catch(() => undefined)
-      if (after !== undefined && after.size !== info.size) return
+      if (after !== undefined && after.size !== info.size) return false
       const contentMd5 = md5Of(bytes)
       const marker = await fetchMarker(sessionId)
       const gitProject = await findGitProject(header.cwd)
       if (marker !== undefined && marker.fileSize === info.size && marker.contentMd5 === contentMd5
-        && marker.projectRoot === gitProject?.root && marker.gitRemote === gitProject?.remote) return // 内容与 Git 归属均无变化
+        && marker.projectRoot === gitProject?.root && marker.gitRemote === gitProject?.remote) return true // 内容与 Git 归属均无变化
       // 增量：server 已有同前缀（md5 验证），只补尾部
       if (marker?.fileSize !== undefined && marker.contentMd5 !== undefined
         && marker.fileSize > 0 && marker.fileSize < info.size
         && md5Of(bytes.subarray(0, marker.fileSize)) === marker.contentMd5) {
-        const ok = await upload(sessionId, header, bytes, marker.fileSize, marker.contentMd5)
-        if (!ok) await uploadFull(sessionId, header, bytes) // 基准不匹配：全量回退
-        return
+        const result = await upload(sessionId, header, bytes, marker.fileSize, marker.contentMd5)
+        if (result === 'conflict') return await uploadFull(sessionId, header, bytes)
+        return result === 'synced' || result === 'failed'
       }
-      await uploadFull(sessionId, header, bytes)
+      return await uploadFull(sessionId, header, bytes)
     } catch (error) {
-      warnOnce(`${sessionId}:read`, `session upload error session=${sessionId}: ${String(error)}`)
+      const message = `session upload error session=${sessionId}: ${String(error)}`
+      markError(message)
+      warnOnce(`${sessionId}:read`, message)
+      return false
     }
   }
 
-  // 官方扩展点。监听器绝不能抛异常：session/created 抛错会让 attach 回滚。
-  ctx.on('session/created', (session: Session) => {
-    scheduler.schedule(session.id, () => syncSession(session.id, session.header))
-  })
-  ctx.on('session/flush', (session: Session) => {
-    scheduler.schedule(session.id, () => syncSession(session.id, session.header))
-  })
-  ctx.on('session/disposed', (session: Session) => {
+  const flushThenSchedule = async (session: Session): Promise<void> => {
+    try {
+      await ctx.sessions.flush(session)
+    } catch (error) {
+      const message = `session flush before upload failed session=${session.id}: ${String(error)}`
+      markError(message)
+      warnOnce(`${session.id}:flush`, message)
+      return
+    }
     scheduler.runNow(session.id, () => syncSession(session.id, session.header))
-  })
+  }
+
+  // 官方扩展点。监听器绝不能抛异常：session/created 抛错会让 attach 回滚。
+  // Browser agents run in child scopes that are siblings of this Host plugin.
+  // Subscribe at the root so their carrier-scoped lifecycle events reach sync.
+  const lifecycleDisposers = [
+    ctx.on('session/created', (session: Session) => {
+      scheduler.schedule(session.id, () => syncSession(session.id, session.header))
+    }, { global: true }),
+    ctx.on('session/flush', (session: Session) => {
+      syncStatus.flushEvents += 1
+      syncStatus.lastFlushAt = Date.now()
+      syncStatus.lastFlushSession = session.id
+      scheduler.schedule(session.id, () => syncSession(session.id, session.header))
+    }, { global: true }),
+    ctx.on('session/disposed', (session: Session) => {
+      scheduler.runNow(session.id, () => syncSession(session.id, session.header))
+    }, { global: true }),
+  ]
+  ctx.effect(() => async () => {
+    for (const dispose of lifecycleDisposers.reverse()) dispose()
+    await scheduler.dispose()
+  }, 'team-client.session-sync')
 
   // 挂载补传：每个会话同步一次（syncSession 内部每次都会拉取最新状态）。
   const backfill = async (): Promise<void> => {
+    syncLog('info', 'backfill start')
     try {
       for (const session of ctx.sessions.list()) {
-        scheduler.runNow(session.id, () => syncSession(session.id, session.header))
+        void flushThenSchedule(session)
       }
       const listed = await ctx.sessionController.list({}, AbortSignal.timeout(15_000))
       for (const item of listed.items) {
