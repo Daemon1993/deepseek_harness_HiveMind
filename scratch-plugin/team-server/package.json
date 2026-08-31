@@ -25,6 +25,7 @@
     "build:host": "tsdown --config tsdown.host.config.ts",
     "build:web": "tsdown --config tsdown.admin.config.ts && tsdown --config tsdown.login.config.ts",
     "build": "pnpm run build:host && pnpm run build:web",
+    "test": "vitest run",
     "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start-local.ps1",
     "pack:plugin": "pnpm run build && pnpm pack"
   },
@@ -46,6 +47,7 @@
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
     "tsdown": "^0.22.2",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.8"
   }
 }

@@ -1,5 +1,5 @@
 import { Service } from "@deepseek-ai/cordis";
-import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChangeInput, TeamContext, TeamGitOpInput, TeamServiceApi, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
+import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChangeInput, TeamContext, TeamGitOpInput, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
 
 import users from "./users.json" with { type: "json" };
 
@@ -65,7 +65,7 @@ export class TeamService extends Service implements TeamServiceApi {
     return this.database.ensureSessionOwner(sessionId, userId)
   }
 
-  async readSessionMarker(sessionId: string): Promise<{ userId: string; contentMd5: string | null; fileSize: number | null } | undefined> {
+  async readSessionMarker(sessionId: string): Promise<{ userId: string; contentMd5: string | null; fileSize: number | null; projectRoot?: string; gitRemote?: string } | undefined> {
     return this.database.readSessionMarker(sessionId)
   }
 
@@ -99,6 +99,14 @@ export class TeamService extends Service implements TeamServiceApi {
 
   async listSyncStatus(): Promise<readonly TeamSessionSyncState[]> {
     return this.database.listSyncStatus()
+  }
+
+  async saveSessionAnalytics(snapshot: TeamSessionAnalytics): Promise<void> {
+    return this.database.saveSessionAnalytics(snapshot)
+  }
+
+  async listSessionAnalytics(): Promise<readonly TeamSessionAnalytics[]> {
+    return this.database.listSessionAnalytics()
   }
 
   async audit(entry: TeamAuditLogInput): Promise<void> {

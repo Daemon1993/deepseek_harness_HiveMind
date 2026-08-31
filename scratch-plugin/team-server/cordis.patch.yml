@@ -3,10 +3,9 @@
       name: dsh-team-server
       disabled: !!js process.env.TEAM_ROLE === 'client'
 
-# server 角色下把会话持久化根指到独立目录（单机开发与 client 隔离，多机默认 home）。
-# 注意：不能在这里用 disabled 做角色守卫——patch 的 disabled 会禁用被覆盖的目标行本身；
-# 守卫必须放在表达式内，client 角色永远回落默认根。
+# Server 永远使用独立的会话根；显式配置优先，缺省目录也不得与 Client 共用。
+# Client 角色保留 DSH 默认根，因为该 patch 仍存在于已安装但禁用的 Server bundle 中。
 - id: session-persistence-jsonl
   config:
     root: !!js >-
-      process.env.TEAM_ROLE === 'client' ? dshHomePath('sessions') : (process.env.TEAM_SESSIONS_ROOT ?? dshHomePath('sessions'))
+      process.env.TEAM_ROLE === 'client' ? dshHomePath('sessions') : (process.env.TEAM_SESSIONS_ROOT ?? dshHomePath('team-server-sessions'))

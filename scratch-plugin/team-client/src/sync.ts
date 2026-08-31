@@ -7,15 +7,40 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-controller'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { readFile, stat } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
+import { SessionSyncScheduler } from './session-sync-scheduler.ts'
 
 const COMPANY_TOKEN_REF = credentialRef('TEAM_COMPANY_TOKEN')
 
 /** 单次上传上限（全量替换时超过则跳过并告警一次）。 */
 const MAX_LOG_BYTES = 50 * 1024 * 1024
+const SYNC_DEBOUNCE_MS = 500
 
 function md5Of(bytes: Buffer | Uint8Array): string {
   return createHash('md5').update(bytes).digest('hex')
+}
+
+type GitProject = { root: string; remote?: string }
+const gitProjects = new Map<string, Promise<GitProject | undefined>>()
+const execFileAsync = promisify(execFile)
+
+/** Ask Git for the repository root and optional origin URL of one workspace. */
+function findGitProject(cwd: string | undefined): Promise<GitProject | undefined> {
+  if (cwd === undefined) return Promise.resolve(undefined)
+  const cached = gitProjects.get(cwd)
+  if (cached !== undefined) return cached
+  const pending = (async (): Promise<GitProject | undefined> => {
+    const root = (await execFileAsync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'])).stdout.trim()
+    if (root === '') return undefined
+    const remote = await execFileAsync('git', ['-C', root, 'config', '--get', 'remote.origin.url'])
+      .then(result => result.stdout.trim())
+      .catch(() => '')
+    return { root, ...(remote === '' ? {} : { remote }) }
+  })().catch(() => undefined)
+  gitProjects.set(cwd, pending)
+  return pending
 }
 
 function syncLog(level: 'warn', message: string): void {
@@ -23,13 +48,10 @@ function syncLog(level: 'warn', message: string): void {
   console.warn(line)
 }
 
-type SessionState = {
-  syncing: boolean
-}
-
 /** 订阅本地 Session 生命周期，把每个会话的日志增量/全量同步到 server。 */
 export function registerSessionSync(ctx: Context, serverURL: string): void {
-  const states = new Map<string, SessionState>()
+  const scheduler = new SessionSyncScheduler(SYNC_DEBOUNCE_MS)
+  ctx.effect(() => async () => scheduler.dispose(), 'team-client.session-sync')
   const warned = new Set<string>()
   const warnOnce = (key: string, message: string): void => {
     if (warned.has(key)) return
@@ -48,14 +70,6 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
     res.end(JSON.stringify(syncStatus))
   } })
-  // 手动触发同步：浏览器点"手动同步"时调用，对全部 live 会话触发一次同步。
-  ctx.webServer.register({ kind: 'exact', path: '/team/sync/now', async handler(req, res) {
-    if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
-    for (const session of ctx.sessions.list()) void syncSession(session.id, session.header)
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ ok: true }))
-  } })
-
   const authHeaders = async (): Promise<Record<string, string> | undefined> => {
     const credential = await ctx.credentials.resolve(COMPANY_TOKEN_REF)
     if (credential === undefined) return undefined
@@ -73,6 +87,7 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
     const delta = baseSize === undefined ? bytes : bytes.subarray(baseSize)
     const headers = await authHeaders()
     if (headers === undefined) return false // 未登录：静默，登录后下次触发再传
+    const gitProject = await findGitProject(header.cwd)
     markSyncing(true)
     try {
       const response = await fetch(`${serverURL}/team/api/sync/session`, {
@@ -84,6 +99,8 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
           log: delta.toString('base64'),
           contentMd5,
           totalSize: bytes.byteLength,
+          ...(gitProject === undefined ? {} : { projectRoot: gitProject.root }),
+          ...(gitProject?.remote === undefined ? {} : { gitRemote: gitProject.remote }),
           ...(baseSize === undefined || baseMd5 === undefined ? {} : { baseSize, baseMd5 }),
         }),
       })
@@ -110,15 +127,15 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
   }
 
   /** 每次同步前从 server 拉取该会话的已存状态（位置+指纹）。 */
-  const fetchMarker = async (sessionId: string): Promise<{ fileSize?: number; contentMd5?: string } | undefined> => {
+  const fetchMarker = async (sessionId: string): Promise<{ fileSize?: number; contentMd5?: string; projectRoot?: string; gitRemote?: string } | undefined> => {
     const headers = await authHeaders()
     if (headers === undefined) return undefined
     try {
       const response = await fetch(`${serverURL}/team/api/sync/session/status?sessionId=${encodeURIComponent(sessionId)}`, { headers })
       if (!response.ok) return undefined
-      const data = await response.json() as { has: boolean; fileSize?: number; contentMd5?: string }
+      const data = await response.json() as { has: boolean; fileSize?: number; contentMd5?: string; projectRoot?: string; gitRemote?: string }
       return data.has
-        ? { ...(data.fileSize === undefined ? {} : { fileSize: data.fileSize }), ...(data.contentMd5 === undefined ? {} : { contentMd5: data.contentMd5 }) }
+        ? { ...(data.fileSize === undefined ? {} : { fileSize: data.fileSize }), ...(data.contentMd5 === undefined ? {} : { contentMd5: data.contentMd5 }), ...(data.projectRoot === undefined ? {} : { projectRoot: data.projectRoot }), ...(data.gitRemote === undefined ? {} : { gitRemote: data.gitRemote }) }
         : undefined
     } catch {
       return undefined
@@ -126,9 +143,6 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
   }
 
   const syncSession = async (sessionId: string, header: SessionHeader): Promise<void> => {
-    const state = ensureState(sessionId)
-    if (state.syncing) return // 已有同步在途：跳过，下次触发会带上剩余增量
-    state.syncing = true
     try {
       const location = ctx.sessionPersistence.locate(header)
       if (location === undefined) return
@@ -141,7 +155,9 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
       if (after !== undefined && after.size !== info.size) return
       const contentMd5 = md5Of(bytes)
       const marker = await fetchMarker(sessionId)
-      if (marker !== undefined && marker.fileSize === info.size && marker.contentMd5 === contentMd5) return // 无变化
+      const gitProject = await findGitProject(header.cwd)
+      if (marker !== undefined && marker.fileSize === info.size && marker.contentMd5 === contentMd5
+        && marker.projectRoot === gitProject?.root && marker.gitRemote === gitProject?.remote) return // 内容与 Git 归属均无变化
       // 增量：server 已有同前缀（md5 验证），只补尾部
       if (marker?.fileSize !== undefined && marker.contentMd5 !== undefined
         && marker.fileSize > 0 && marker.fileSize < info.size
@@ -153,39 +169,31 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
       await uploadFull(sessionId, header, bytes)
     } catch (error) {
       warnOnce(`${sessionId}:read`, `session upload error session=${sessionId}: ${String(error)}`)
-    } finally {
-      state.syncing = false
     }
-  }
-
-  const ensureState = (sessionId: string): SessionState => {
-    let state = states.get(sessionId)
-    if (state === undefined) {
-      state = { syncing: false }
-      states.set(sessionId, state)
-    }
-    return state
   }
 
   // 官方扩展点。监听器绝不能抛异常：session/created 抛错会让 attach 回滚。
   ctx.on('session/created', (session: Session) => {
-    ensureState(session.id)
-    void syncSession(session.id, session.header)
+    scheduler.schedule(session.id, () => syncSession(session.id, session.header))
   })
-  ctx.on('session/flush', (session: Session) => { void syncSession(session.id, session.header) })
-  ctx.on('session/disposed', (session: Session) => { void syncSession(session.id, session.header) })
+  ctx.on('session/flush', (session: Session) => {
+    scheduler.schedule(session.id, () => syncSession(session.id, session.header))
+  })
+  ctx.on('session/disposed', (session: Session) => {
+    scheduler.runNow(session.id, () => syncSession(session.id, session.header))
+  })
 
   // 挂载补传：每个会话同步一次（syncSession 内部每次都会拉取最新状态）。
   const backfill = async (): Promise<void> => {
     try {
       for (const session of ctx.sessions.list()) {
-        void syncSession(session.id, session.header)
+        scheduler.runNow(session.id, () => syncSession(session.id, session.header))
       }
       const listed = await ctx.sessionController.list({}, AbortSignal.timeout(15_000))
       for (const item of listed.items) {
         try {
           const inspected = await ctx.sessionController.inspect(item.sessionId, AbortSignal.timeout(15_000))
-          void syncSession(inspected.meta.id, inspected.meta)
+          scheduler.runNow(inspected.meta.id, () => syncSession(inspected.meta.id, inspected.meta))
         } catch (error) {
           warnOnce(`backfill:${item.sessionId}`, `session backfill inspect failed session=${item.sessionId}: ${String(error)}`)
         }

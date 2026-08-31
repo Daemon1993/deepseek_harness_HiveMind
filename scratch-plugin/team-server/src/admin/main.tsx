@@ -6,9 +6,9 @@ import type { ColumnsType } from 'antd/es/table'
 type Role = 'admin' | 'developer' | 'reviewer' | 'user'
 type Status = 'pending' | 'active' | 'rejected' | 'disabled'
 type User = { id: string; email?: string; name: string; status: Status; role: Role; password?: string }
-type SessionOwner = { sessionId: string; userId: string; userName: string; email?: string; createdAt: string; lastActiveAt: string; title?: string; cwd?: string; updatedAt?: number; blank?: boolean }
+type SessionOwner = { sessionId: string; userId: string; userName: string; email?: string; createdAt: string; lastActiveAt: string; title?: string; cwd?: string; projectName?: string; projectRoot?: string; gitRemote?: string; updatedAt?: number; blank?: boolean }
 type Phase = 'checking' | 'ready'
-type Section = 'dashboard' | 'sessions' | 'accounts' | 'sync'
+type Section = 'dashboard' | 'users' | 'projects' | 'sessions' | 'accounts' | 'sync'
 
 // ── 总览类型（/team/admin/overview）──────────────────────────
 type OverviewSummary = {
@@ -19,11 +19,11 @@ type OverviewSummary = {
   activeDurationMs: number; durationMs: number; errors: number
 }
 type OverviewTrend = { date: string; sessions: number; activeUsers: number; toolCalls: number; modelRequests: number; totalTokens: number }
-type OverviewUser = { userId: string; userName: string; sessions: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number }
-type OverviewDirectory = { path: string; name: string; sessions: number; users: number; toolCalls: number; modelRequests: number; totalTokens: number }
+type OverviewUser = { userId: string; userName: string; sessions: number; projects: number; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }
+type OverviewDirectory = { id: string; path: string; name: string; gitRemote?: string; sessions: number; users: number; members: { userId: string; userName: string }[]; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }
 type OverviewTool = { name: string; calls: number; failures: number; users: number }
 type OverviewModel = { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }
-type OverviewRecent = { sessionId: string; title: string; userName: string; cwd?: string; lastActiveAt: number; toolCalls: number; durationMs: number; errorCount: number }
+type OverviewRecent = { sessionId: string; title: string; userId: string; userName: string; projectRoot?: string; gitRemote?: string; lastActiveAt: number; toolCalls: number; durationMs: number; errorCount: number }
 type Overview = {
   rangeDays: number; generatedAt: string; summary: OverviewSummary
   trends: OverviewTrend[]; users: OverviewUser[]; directories: OverviewDirectory[]
@@ -57,17 +57,21 @@ const fmt = (ms: number): string => {
   return m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m${r}s`
 }
 const fmtNum = (n: number): string => n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n)
-/** 按日柱状图（趋势）。 */
+/** 按日对比工具调用与模型请求。 */
 function TrendChart({ data }: { data: OverviewTrend[] }) {
-  const max = Math.max(1, ...data.map(d => d.toolCalls))
-  return <div className="chart-trend">
-    {data.map(d => (
-      <div key={d.date} className={d.toolCalls === 0 ? 'bar empty' : 'bar'} style={{ height: `${Math.max(3, Math.round(d.toolCalls / max * 100))}%` }}>
-        <span className="v">{d.toolCalls}</span>
+  const max = Math.max(1, ...data.flatMap(d => [d.toolCalls, d.modelRequests]))
+  return <>
+    <div className="chartLegend"><span><i className="legendTool" />工具调用</span><span><i className="legendModel" />模型请求</span></div>
+    <div className="chart-trend">
+      {data.map(d => <div key={d.date} className="trendGroup">
+        <div className="trendBars">
+          <div className={d.toolCalls === 0 ? 'bar tool empty' : 'bar tool'} style={{ height: `${Math.max(3, Math.round(d.toolCalls / max * 100))}%` }}><span className="v">{d.toolCalls}</span></div>
+          <div className={d.modelRequests === 0 ? 'bar model empty' : 'bar model'} style={{ height: `${Math.max(3, Math.round(d.modelRequests / max * 100))}%` }}><span className="v">{d.modelRequests}</span></div>
+        </div>
         <span className="d">{d.date.slice(5)}</span>
-      </div>
-    ))}
-  </div>
+      </div>)}
+    </div>
+  </>
 }
 
 /** 水平条形图（排行）。 */
@@ -185,12 +189,16 @@ function AdminRoot() {
   if (phase === 'checking') return <Centered><Card loading title="团队平台管理后台" /></Centered>
   const sectionCopy = section === 'dashboard'
     ? { title: '总览', description: '团队 AI 使用情况的统一视图：会话、成员、项目、工具、模型' }
+    : section === 'users'
+      ? { title: '用户数据', description: '按成员查看项目参与、会话活动、AI 消耗与工具质量' }
+    : section === 'projects'
+      ? { title: '项目数据', description: '按工作目录查看成员参与、会话产出、Token 与运行异常' }
     : section === 'accounts'
       ? { title: '账号与权限', description: '统一管理账号申请、用户状态和角色权限' }
     : section === 'sync'
       ? { title: '同步状态', description: '查看每位用户的 Session 同步进度与健康情况' }
       : { title: '会话', description: '按用户与项目查看全部会话，点击查看完整分析' }
-  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">AI</div><div><Typography.Text strong>TEAM PLATFORM</Typography.Text><Typography.Text type="secondary" className="blockText">管理控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={[...(canEdit ? [{ key: 'dashboard', label: '总览' }] : []), { key: 'accounts', label: '账号与权限' }, ...(canEdit ? [{ key: 'sessions', label: <Space>会话<Badge count={sessions.length} showZero color="#1677ff" /></Space> }, { key: 'sync', label: '同步状态' }] : [])]} /><div className="siderUser"><Avatar>{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardPanel onOpenSession={setDetail} /> : section === 'accounts' ? <AccountsPanel users={users} loading={loading} columns={columns} /> : section === 'sync' ? <SyncStatusPanel /> : <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={setDetail} />}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
+  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">AI</div><div><Typography.Text strong>TEAM PLATFORM</Typography.Text><Typography.Text type="secondary" className="blockText">管理控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={[...(canEdit ? [{ key: 'dashboard', label: '总览' }, { key: 'users', label: '用户' }, { key: 'projects', label: '项目' }] : []), { key: 'accounts', label: '账号与权限' }, ...(canEdit ? [{ key: 'sessions', label: <Space>会话<Badge count={sessions.length} showZero color="#1677ff" /></Space> }, { key: 'sync', label: '同步状态' }] : [])]} /><div className="siderUser"><Avatar>{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardPanel onOpenSession={setDetail} /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : section === 'accounts' ? <AccountsPanel users={users} loading={loading} columns={columns} /> : section === 'sync' ? <SyncStatusPanel /> : <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={setDetail} />}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
 }
 
 /** 会话详情抽屉：完整指标 + 分组时间线 + 工具耗时。 */
@@ -261,15 +269,23 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
   }, [days])
 
   const s = data?.summary
-  const statCards = [
-    { title: '会话', value: s?.sessions ?? 0, sub: `${s?.activeUsers ?? 0} 位活跃用户` },
-    { title: '项目', value: s?.projects ?? 0, sub: '活跃工作目录' },
-    { title: '工具调用', value: s?.toolCalls ?? 0, sub: `失败率 ${s?.toolFailureRate ?? 0}%` },
-    { title: '模型请求', value: s?.modelRequests ?? 0, sub: `${s?.assistantMessages ?? 0} 条回复` },
-    { title: 'Token', value: s?.totalTokens ?? 0, sub: `进 ${fmtNum(s?.inputTokens ?? 0)} · 出 ${fmtNum(s?.outputTokens ?? 0)}` },
-    { title: '活跃时长', value: fmt(s?.activeDurationMs ?? 0), sub: `跨度 ${fmt(s?.durationMs ?? 0)}` },
-    { title: '消息', value: (s?.userMessages ?? 0) + (s?.assistantMessages ?? 0), sub: '用户 + 助手' },
-    { title: '错误', value: s?.errors ?? 0, sub: s?.errors ? '需关注' : '无', danger: (s?.errors ?? 0) > 0 },
+  const toolSuccessRate = Math.max(0, 100 - (s?.toolFailureRate ?? 0))
+  const avgTokens = (s?.modelRequests ?? 0) === 0 ? 0 : Math.round((s?.totalTokens ?? 0) / (s?.modelRequests ?? 1))
+  const avgActiveTime = (s?.sessions ?? 0) === 0 ? 0 : Math.round((s?.activeDurationMs ?? 0) / (s?.sessions ?? 1))
+  const topUser = data?.users[0]
+  const topModel = data?.models[0]
+  const failedTools = (data?.tools ?? []).filter(tool => tool.failures > 0)
+  const primaryStats = [
+    { tone: 'blue', label: '团队活跃', value: s?.activeUsers ?? 0, unit: '人', detail: `${s?.sessions ?? 0} 个会话` },
+    { tone: 'purple', label: 'AI 消耗', value: fmtNum(s?.totalTokens ?? 0), unit: 'Token', detail: `${s?.modelRequests ?? 0} 次模型请求` },
+    { tone: toolSuccessRate < 95 ? 'orange' : 'green', label: '工具成功率', value: `${toolSuccessRate}%`, unit: '', detail: `${s?.toolCalls ?? 0} 次调用 · ${s?.toolFailures ?? 0} 次失败` },
+    { tone: (s?.errors ?? 0) > 0 ? 'red' : 'green', label: '运行健康', value: s?.errors ?? 0, unit: '错误', detail: (s?.errors ?? 0) > 0 ? '存在需要关注的异常' : '当前范围内运行正常' },
+  ]
+  const secondaryStats = [
+    { label: '活跃项目', value: String(s?.projects ?? 0), detail: '工作目录' },
+    { label: '对话消息', value: String((s?.userMessages ?? 0) + (s?.assistantMessages ?? 0)), detail: `${s?.userMessages ?? 0} 用户 · ${s?.assistantMessages ?? 0} 助手` },
+    { label: '平均请求消耗', value: fmtNum(avgTokens), detail: 'Token / 请求' },
+    { label: '平均会话活跃', value: fmt(avgActiveTime), detail: `累计 ${fmt(s?.activeDurationMs ?? 0)}` },
   ]
   const userColumns: ColumnsType<OverviewUser> = [
     { title: '成员', render: (_, u) => <Space><Avatar shape="square">{u.userName.slice(0, 1)}</Avatar><Typography.Text strong>{u.userName}</Typography.Text><Typography.Text type="secondary">{u.userId}</Typography.Text></Space> },
@@ -305,27 +321,45 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
   const recentColumns: ColumnsType<OverviewRecent> = [
     { title: '会话', width: 300, render: (_, r) => <div><Typography.Text strong>{r.title}</Typography.Text><Typography.Text code copyable={{ text: r.sessionId }} type="secondary" className="blockText">{r.sessionId.slice(0, 20)}</Typography.Text></div> },
     { title: '成员', width: 140, render: (_, r) => r.userName },
-    { title: '目录', dataIndex: 'cwd', ellipsis: true, render: v => v === undefined ? '未分组' : <Typography.Text code ellipsis={{ tooltip: v }}>{v}</Typography.Text> },
+    { title: '项目', dataIndex: 'projectRoot', ellipsis: true, render: v => v === undefined ? '未关联 Git 项目' : <Typography.Text code ellipsis={{ tooltip: v }}>{v}</Typography.Text> },
     { title: '工具', dataIndex: 'toolCalls', width: 80 },
+    { title: '最后活跃', dataIndex: 'lastActiveAt', width: 170, render: v => new Date(v).toLocaleString() },
     { title: '时长', width: 90, render: (_, r) => fmt(r.durationMs) },
     { title: '错误', dataIndex: 'errorCount', width: 70, render: v => v === 0 ? '—' : <Tag color="red">{v}</Tag> },
     { title: '操作', width: 90, render: (_, r) => <Button type="link" onClick={() => void openDetail(r.sessionId, onOpenSession)}>详情</Button> },
   ]
   return <Space direction="vertical" size={18} className="analyticsPage">
-    <div className="analyticsToolbar"><Typography.Text type="secondary">统一视图：会话过程、成员活跃、项目产出、工具与模型消耗</Typography.Text><Segmented value={days} onChange={value => setDays(value as 1 | 7 | 30)} options={[{ label: '近 24 小时', value: 1 }, { label: '近 7 天', value: 7 }, { label: '近 30 天', value: 30 }]} /></div>
+    <section className="overviewHero">
+      <div className="overviewHeroHead"><div><Typography.Text className="eyebrow">TEAM PULSE</Typography.Text><Typography.Title level={4}>团队运行概况</Typography.Title><Typography.Text type="secondary">聚焦活跃、消耗、成功率与异常</Typography.Text></div><div className="rangeControl"><Typography.Text type="secondary">统计范围</Typography.Text><Segmented value={days} onChange={value => setDays(value as 1 | 7 | 30)} options={[{ label: '24 小时', value: 1 }, { label: '7 天', value: 7 }, { label: '30 天', value: 30 }]} /></div></div>
+      <Row gutter={[14, 14]} className="primaryMetrics">
+        {primaryStats.map(card => <Col key={card.label} xs={24} sm={12} xl={6}><Card loading={loading} className={`metricCard ${card.tone}`}><Typography.Text type="secondary">{card.label}</Typography.Text><div className="metricValue">{card.value}<small>{card.unit}</small></div><Typography.Text type="secondary">{card.detail}</Typography.Text></Card></Col>)}
+      </Row>
+      <div className="secondaryMetrics">{secondaryStats.map(item => <div key={item.label}><Typography.Text type="secondary">{item.label}</Typography.Text><strong>{item.value}</strong><span>{item.detail}</span></div>)}</div>
+    </section>
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
     <Row gutter={[16, 16]}>
-      {statCards.map(card => <Col key={card.title} xs={12} sm={6} xl={3}><Card loading={loading} size="small"><Statistic title={card.title} value={card.value} {...(card.danger ? { valueStyle: { color: '#cf1322' } } : {})} /><Typography.Text type="secondary" style={{ fontSize: 12 }}>{card.sub}</Typography.Text></Card></Col>)}
+      <Col xs={24} xl={16}><Card title="活动趋势" extra={<Typography.Text type="secondary">按日对比</Typography.Text>} className="analyticsCard trendCard">{loading ? <Card loading /> : <TrendChart data={data?.trends ?? []} />}</Card></Col>
+      <Col xs={24} xl={8}><Card title="运行健康" className="analyticsCard healthCard" extra={<span className={`healthBadge ${(s?.errors ?? 0) > 0 || failedTools.length > 0 ? 'warn' : 'ok'}`}>{(s?.errors ?? 0) > 0 || failedTools.length > 0 ? '需关注' : '状态良好'}</span>}>
+        <div className="healthList">
+          <div><span>错误事件</span><strong className={(s?.errors ?? 0) > 0 ? 'dangerText' : ''}>{s?.errors ?? 0}</strong></div>
+          <div><span>异常工具种类</span><strong className={failedTools.length > 0 ? 'warningText' : ''}>{failedTools.length}</strong></div>
+          <div><span>主要模型</span><strong title={topModel?.model}>{topModel?.model ?? '—'}</strong></div>
+          <div><span>最活跃成员</span><strong>{topUser === undefined ? '—' : `${topUser.userName} · ${fmtNum(topUser.totalTokens)}`}</strong></div>
+        </div>
+        <div className="healthFoot">更新于 {data?.generatedAt === undefined ? '—' : new Date(data.generatedAt).toLocaleTimeString()}</div>
+      </Card></Col>
     </Row>
-    <Card title="使用趋势（按日工具调用）" className="analyticsCard">{loading ? <Card loading /> : <TrendChart data={data?.trends ?? []} />}</Card>
-    <Card title="成员排行" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
+    <Card title="最近会话" extra={<Typography.Text type="secondary">优先查看错误与最新活动</Typography.Text>} className="analyticsCard"><Table rowKey="sessionId" loading={loading} size="middle" columns={recentColumns} dataSource={[...(data?.recentSessions ?? [])].sort((a, b) => b.errorCount - a.errorCount || b.lastActiveAt - a.lastActiveAt)} pagination={{ pageSize: 6, showSizeChanger: false }} scroll={{ x: 1000 }} /></Card>
+    <Row gutter={[16, 16]}>
+      <Col xs={24} xl={12}><Card title="成员贡献" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
       <HBarChart rows={(data?.users ?? []).map(u => ({ label: u.userName, value: u.totalTokens, display: `${fmtNum(u.totalTokens)} · ${u.sessions} 会话` }))} />
       <Table rowKey="userId" loading={loading} columns={userColumns} dataSource={data?.users ?? []} pagination={false} scroll={{ x: 800 }} />
-    </Space></Card>
-    <Card title="项目产出" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
+    </Space></Card></Col>
+      <Col xs={24} xl={12}><Card title="活跃项目" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
       <HBarChart color="purple" rows={(data?.directories ?? []).map(d => ({ label: d.name, value: d.sessions, display: `${d.sessions} 会话 · ${d.users} 人` }))} />
-      <Table rowKey="path" loading={loading} size="middle" columns={dirColumns} dataSource={data?.directories ?? []} pagination={{ pageSize: 6, showSizeChanger: false }} scroll={{ x: 800 }} />
-    </Space></Card>
+      <Table rowKey="id" loading={loading} size="middle" columns={dirColumns} dataSource={data?.directories ?? []} pagination={{ pageSize: 6, showSizeChanger: false }} scroll={{ x: 800 }} />
+    </Space></Card></Col>
+    </Row>
     <Row gutter={[16, 16]}>
       <Col xs={24} lg={12}><Card title="工具使用" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
         <HBarChart color="green" rows={(data?.tools ?? []).map(t => ({ label: t.name, value: t.calls, display: `${t.calls} 次${t.failures > 0 ? ` · 失败 ${t.failures}` : ''}` }))} />
@@ -336,7 +370,83 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
         <Table rowKey="model" loading={loading} size="middle" columns={modelColumns} dataSource={data?.models ?? []} pagination={false} />
       </Space></Card></Col>
     </Row>
-    <Card title="最近会话" className="analyticsCard"><Table rowKey="sessionId" loading={loading} size="middle" columns={recentColumns} dataSource={data?.recentSessions ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 1000 }} /></Card>
+  </Space>
+}
+
+function useOverview(days: 1 | 7 | 30): { data?: Overview; loading: boolean; error: string } {
+  const [data, setData] = useState<Overview>()
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let live = true
+    setLoading(true); setError('')
+    void fetch(`/team/admin/overview?days=${days}`).then(async response => {
+      const body = await response.json() as Overview & { message?: string }
+      if (!response.ok) throw new Error(body.message ?? '加载数据失败')
+      if (live) setData(body)
+    }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载数据失败') }).finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [days])
+  return { data, loading, error }
+}
+
+function DimensionToolbar({ days, onChange }: { days: 1 | 7 | 30; onChange: (days: 1 | 7 | 30) => void }) {
+  return <div className="dimensionToolbar"><Typography.Text type="secondary">以下数据来自同步后写入 PostgreSQL 的 Session 分析快照</Typography.Text><Segmented value={days} onChange={value => onChange(value as 1 | 7 | 30)} options={[{ label: '24 小时', value: 1 }, { label: '7 天', value: 7 }, { label: '30 天', value: 30 }]} /></div>
+}
+
+function DimensionSessions({ sessions, onOpenSession }: { sessions: OverviewRecent[]; onOpenSession: (d: SessionDetail) => void }) {
+  const columns: ColumnsType<OverviewRecent> = [
+    { title: '会话', render: (_, session) => <div className="recentSessionTitle"><Typography.Text strong ellipsis={{ tooltip: session.title }}>{session.title}</Typography.Text><Typography.Text code copyable type="secondary">{session.sessionId}</Typography.Text></div> },
+    { title: '成员', dataIndex: 'userName', width: 130 },
+    { title: '工具', dataIndex: 'toolCalls', width: 70 },
+    { title: '时长', width: 90, render: (_, session) => fmt(session.durationMs) },
+    { title: '最后活跃', dataIndex: 'lastActiveAt', width: 180, render: value => new Date(value).toLocaleString() },
+    { title: '错误', dataIndex: 'errorCount', width: 70, render: value => value === 0 ? '—' : <Tag color="red">{value}</Tag> },
+    { title: '操作', width: 80, render: (_, session) => <Button type="link" onClick={() => void openDetail(session.sessionId, onOpenSession)}>分析</Button> },
+  ]
+  return <Table rowKey="sessionId" size="small" columns={columns} dataSource={sessions} pagination={false} scroll={{ x: 900 }} />
+}
+
+function UserDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) => void }) {
+  const [days, setDays] = useState<1 | 7 | 30>(7)
+  const { data, loading, error } = useOverview(days)
+  const columns: ColumnsType<OverviewUser> = [
+    { title: '用户', render: (_, user) => <Space><Avatar shape="square">{user.userName.slice(0, 1)}</Avatar><div><Typography.Text strong>{user.userName}</Typography.Text><Typography.Text type="secondary" className="blockText">{user.userId}</Typography.Text></div></Space> },
+    { title: '项目', dataIndex: 'projects', width: 75 },
+    { title: '会话', dataIndex: 'sessions', width: 75 },
+    { title: '消息', dataIndex: 'messages', width: 75 },
+    { title: '模型请求', dataIndex: 'modelRequests', width: 100 },
+    { title: 'Token', dataIndex: 'totalTokens', width: 110, render: fmtNum },
+    { title: '工具成功率', width: 110, render: (_, user) => user.toolCalls === 0 ? '—' : `${Math.round((user.toolCalls - user.toolFailures) / user.toolCalls * 1000) / 10}%` },
+    { title: '活跃时长', width: 100, render: (_, user) => fmt(user.durationMs) },
+    { title: '最后活跃', dataIndex: 'lastActiveAt', width: 180, render: value => value === 0 ? '—' : new Date(value).toLocaleString() },
+  ]
+  const totalTokens = data?.users.reduce((sum, user) => sum + user.totalTokens, 0) ?? 0
+  return <Space direction="vertical" size={18} className="analyticsPage"><DimensionToolbar days={days} onChange={setDays} />{error && <Alert type="error" showIcon message={error} />}
+    <Row gutter={[16, 16]} className="analyticsStats"><Col xs={12} lg={6}><Card loading={loading}><Statistic title="活跃用户" value={data?.users.length ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="用户会话" value={data?.users.reduce((sum, user) => sum + user.sessions, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="模型请求" value={data?.users.reduce((sum, user) => sum + user.modelRequests, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Token" value={fmtNum(totalTokens)} /></Card></Col></Row>
+    <Card title="用户使用情况" className="analyticsCard"><Table rowKey="userId" loading={loading} columns={columns} dataSource={data?.users ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1100 }} expandable={{ expandedRowRender: user => <DimensionSessions sessions={(data?.recentSessions ?? []).filter(session => session.userId === user.userId)} onOpenSession={onOpenSession} />, rowExpandable: user => (data?.recentSessions ?? []).some(session => session.userId === user.userId) }} /></Card>
+  </Space>
+}
+
+function ProjectDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) => void }) {
+  const [days, setDays] = useState<1 | 7 | 30>(7)
+  const { data, loading, error } = useOverview(days)
+  const columns: ColumnsType<OverviewDirectory> = [
+    { title: '项目', render: (_, project) => <div><Typography.Text strong>{project.name}</Typography.Text><Typography.Text code copyable={{ text: project.path }} type="secondary" className="blockText analyticsPath">{project.path}</Typography.Text>{project.gitRemote !== undefined && <Typography.Text copyable={{ text: project.gitRemote }} type="secondary" className="blockText analyticsPath">{project.gitRemote}</Typography.Text>}</div> },
+    { title: '成员', dataIndex: 'users', width: 75 },
+    { title: '会话', dataIndex: 'sessions', width: 75 },
+    { title: '消息', dataIndex: 'messages', width: 75 },
+    { title: '模型请求', dataIndex: 'modelRequests', width: 100 },
+    { title: 'Token', dataIndex: 'totalTokens', width: 110, render: fmtNum },
+    { title: '工具调用', dataIndex: 'toolCalls', width: 100 },
+    { title: '活跃时长', width: 100, render: (_, project) => fmt(project.durationMs) },
+    { title: '错误', dataIndex: 'errors', width: 70, render: value => value === 0 ? '—' : <Tag color="red">{value}</Tag> },
+    { title: '最后活跃', dataIndex: 'lastActiveAt', width: 180, render: value => new Date(value).toLocaleString() },
+  ]
+  const activeMembers = new Set((data?.directories ?? []).flatMap(project => project.members.map(member => member.userId))).size
+  return <Space direction="vertical" size={18} className="analyticsPage"><DimensionToolbar days={days} onChange={setDays} />{error && <Alert type="error" showIcon message={error} />}
+    <Row gutter={[16, 16]} className="analyticsStats"><Col xs={12} lg={6}><Card loading={loading}><Statistic title="活跃项目" value={data?.directories.length ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="参与成员" value={activeMembers} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="项目会话" value={data?.directories.reduce((sum, project) => sum + project.sessions, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Token" value={fmtNum(data?.directories.reduce((sum, project) => sum + project.totalTokens, 0) ?? 0)} /></Card></Col></Row>
+    <Card title="Git 项目使用情况" className="analyticsCard"><Table rowKey="id" loading={loading} columns={columns} dataSource={data?.directories ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1100 }} expandable={{ expandedRowRender: project => <Space direction="vertical" size={14} style={{ width: '100%' }}><Space wrap><Typography.Text type="secondary">参与成员</Typography.Text>{project.members.map(member => <Tag key={member.userId}>{member.userName}</Tag>)}</Space><DimensionSessions sessions={(data?.recentSessions ?? []).filter(session => (session.gitRemote ?? session.projectRoot) === project.id)} onOpenSession={onOpenSession} /></Space>, rowExpandable: project => (data?.recentSessions ?? []).some(session => (session.gitRemote ?? session.projectRoot) === project.id) }} /></Card>
   </Space>
 }
 
@@ -411,7 +521,14 @@ function SessionOwnershipPanel({ sessions, loading, onOpenSession }: { sessions:
     { title: '更新时间', dataIndex: 'updatedAt', width: 190, render: (_, session) => session.updatedAt === undefined ? '—' : new Date(session.updatedAt).toLocaleString() },
     { title: '操作', width: 90, render: (_, session) => <Button type="link" onClick={() => void openDetail(session.sessionId, onOpenSession)}>分析</Button> },
   ]
-  return <><Row gutter={16} className="stats"><Col span={8}><Card><Statistic title="已关联用户" value={groups.length} /></Card></Col><Col span={8}><Card><Statistic title="全部 Session" value={sessions.length} /></Card></Col><Col span={8}><Card><Statistic title="平均每人" value={groups.length ? (sessions.length / groups.length).toFixed(1) : 0} /></Card></Col></Row><Card className="sessionCard" loading={loading}>{groups.length === 0 ? <Empty description="暂无会话归属记录" /> : <Collapse defaultActiveKey={groups.map(group => group.userId)} items={groups.map(group => { const directories = Object.values(group.sessions.reduce<Record<string, { cwd?: string; sessions: SessionOwner[] }>>((all, session) => { const key = session.cwd ?? '__ungrouped__'; const directory = all[key] ?? { ...(session.cwd === undefined ? {} : { cwd: session.cwd }), sessions: [] }; directory.sessions.push(session); all[key] = directory; return all }, {})); return { key: group.userId, label: <div className="userGroupLabel"><Space><Avatar shape="square">{group.userName.slice(0, 1)}</Avatar><div><Typography.Text strong>{group.userName}</Typography.Text><Typography.Text type="secondary" className="blockText">{group.email ?? group.userId}</Typography.Text></div></Space><Tag color="blue">{group.sessions.length} 个 Session</Tag></div>, children: <Collapse className="directoryGroups" defaultActiveKey={directories.map(directory => directory.cwd ?? '__ungrouped__')} items={directories.map(directory => ({ key: directory.cwd ?? '__ungrouped__', label: <div className="directoryLabel"><div><Typography.Text strong>{directory.cwd === undefined ? '未分组' : directory.cwd.split(/[\\/]/).filter(Boolean).at(-1)}</Typography.Text>{directory.cwd !== undefined && <Typography.Text code copyable={{ text: directory.cwd }} type="secondary" className="directoryPath">{directory.cwd}</Typography.Text>}</div><Tag>{directory.sessions.length} 个会话</Tag></div>, children: <Table rowKey="sessionId" size="middle" columns={columns} dataSource={directory.sessions} pagination={false} /> }))} /> } })} />}</Card></>
+  return <><Row gutter={16} className="stats"><Col span={8}><Card><Statistic title="已关联用户" value={groups.length} /></Card></Col><Col span={8}><Card><Statistic title="全部 Session" value={sessions.length} /></Card></Col><Col span={8}><Card><Statistic title="平均每人" value={groups.length ? (sessions.length / groups.length).toFixed(1) : 0} /></Card></Col></Row><Card className="sessionCard" loading={loading}>{groups.length === 0 ? <Empty description="暂无会话归属记录" /> : <Collapse defaultActiveKey={groups.map(group => group.userId)} items={groups.map(group => {
+    const projects = Object.values(group.sessions.reduce<Record<string, { projectName?: string; projectRoot?: string; gitRemote?: string; sessions: SessionOwner[] }>>((all, session) => {
+      const key = session.gitRemote ?? session.projectRoot ?? '__unlinked__'
+      const project = all[key] ?? { ...(session.projectName === undefined ? {} : { projectName: session.projectName }), ...(session.projectRoot === undefined ? {} : { projectRoot: session.projectRoot }), ...(session.gitRemote === undefined ? {} : { gitRemote: session.gitRemote }), sessions: [] }
+      project.sessions.push(session); all[key] = project; return all
+    }, {}))
+    return { key: group.userId, label: <div className="userGroupLabel"><Space><Avatar shape="square">{group.userName.slice(0, 1)}</Avatar><div><Typography.Text strong>{group.userName}</Typography.Text><Typography.Text type="secondary" className="blockText">{group.email ?? group.userId}</Typography.Text></div></Space><Tag color="blue">{group.sessions.length} 个 Session</Tag></div>, children: <Collapse className="directoryGroups" defaultActiveKey={projects.map(project => project.gitRemote ?? project.projectRoot ?? '__unlinked__')} items={projects.map(project => ({ key: project.gitRemote ?? project.projectRoot ?? '__unlinked__', label: <div className="directoryLabel"><div><Typography.Text strong>{project.projectName ?? '未关联 Git 项目'}</Typography.Text>{project.gitRemote !== undefined && <Typography.Text copyable type="secondary" className="directoryPath">{project.gitRemote}</Typography.Text>}</div><Tag>{project.sessions.length} 个会话</Tag></div>, children: <Table rowKey="sessionId" size="middle" columns={columns} dataSource={project.sessions} pagination={false} /> }))} /> }
+  })} />}</Card></>
 }
 
 function Centered({ children }: { children: React.ReactNode }) { return <div className="centered">{children}</div> }

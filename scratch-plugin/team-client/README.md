@@ -9,7 +9,7 @@
 - 登录：`/team/login` 转发到 server，**token 被 Host 拦截存入 credentials，不进浏览器**
 - 守卫：`/team/session` 水合恢复登录态；未登录跳登录页
 - 模型走网关：patch 替换 llm-deepseek 的 `baseURL` + `apiKeyEnv`（`cordis.patch.yml`）
-- 会话同步：`session/flush` 触发，md5 字节增量 + 读稳定性校验（`src/sync.ts`）
+- 会话同步：同一 Session 的连续 `session/flush` 在 500 毫秒内合并；同步期间的新 flush 会在完成后补传最新状态。上传采用 MD5 字节增量和读取稳定性校验（`src/sync.ts`）
 - Git 同步：监听 `tools/post-execute` 提取元数据（`src/git-sync.ts`）
 - UI：同步横幅 / 账号状态（`sidebar.footer.action` Client Slot）
 
