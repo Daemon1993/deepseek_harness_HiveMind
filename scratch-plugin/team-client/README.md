@@ -1,12 +1,19 @@
-# DSH Team Client
+# dsh-team-client
 
-Employee-side DeepSeek Harness plugin for the Team Platform. It contributes the account state and sign-out controls through the official `sidebar.footer.action` Client Slot.
+员工侧插件（HiveMind 团队平台的一部分）。提供登录转发、凭证托管、会话/Git 同步与状态 UI。
 
-The Local DSH owns its login surface: `/team/login-page` serves the plugin's own login page, `/team/login` validates against the team server and keeps the issued token in Host credentials, and `/team/session` reports the in-memory state (rehydrated from the server after a Host restart). `/team/admin` redirects to the server's admin console. Session headers and events are pushed to the server's `/team/api/sync/*` endpoints through the official `session/created` / `session/event` extension points.
+完整说明见 [../README.md](../README.md)。
 
-When no team server routes are installed, the sidebar reports `服务未连接` instead of redirecting. This allows the Client Module discovery and rendering to be verified independently.
+## 职责
 
-## Build and package
+- 登录：`/team/login` 转发到 server，**token 被 Host 拦截存入 credentials，不进浏览器**
+- 守卫：`/team/session` 水合恢复登录态；未登录跳登录页
+- 模型走网关：patch 替换 llm-deepseek 的 `baseURL` + `apiKeyEnv`（`cordis.patch.yml`）
+- 会话同步：`session/flush` 触发，md5 字节增量 + 读稳定性校验（`src/sync.ts`）
+- Git 同步：监听 `tools/post-execute` 提取元数据（`src/git-sync.ts`）
+- UI：同步横幅 / 账号状态（`sidebar.footer.action` Client Slot）
+
+## 构建与打包
 
 ```powershell
 pnpm install
@@ -14,4 +21,10 @@ pnpm run build
 pnpm pack
 ```
 
-Install the resulting tarball into the Web profile with `dsh plugin --profile web add <tarball>`.
+安装：`dsh plugin --profile web add <tarball>`（员工机器）。
+
+## 配置
+
+`TEAM_ROLE=client` + `TEAM_SERVER_URL=http://127.0.0.1:3081`（见 `.env.client.example`）。
+
+启动：`./start-local.ps1`（默认 3080 端口）。
