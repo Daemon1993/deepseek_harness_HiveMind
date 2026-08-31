@@ -213,7 +213,7 @@ export class TeamDatabase {
   /** List Session rows visible to one authenticated user, newest activity first. */
   async listOwnSessions(userId: string): Promise<TeamSyncedSession[]> {
     const result = await this.client().query<{ session_id: string; content_md5: string | null; file_size: number | null; created_at: Date; updated_at: Date }>(
-      `SELECT session_id, content_md5, file_size, created_at, updated_at FROM team_session_log
+      `SELECT session_id, content_md5, file_size::integer AS file_size, created_at, updated_at FROM team_session_log
        WHERE user_id = $1 ORDER BY updated_at DESC`,
       [userId],
     )
@@ -235,7 +235,7 @@ export class TeamDatabase {
   /** Read one synced Session's ownership and stored file marker. */
   async readSessionMarker(sessionId: string): Promise<{ userId: string; contentMd5: string | null; fileSize: number | null; projectRoot?: string; gitRemote?: string } | undefined> {
     const result = await this.client().query<{ user_id: string; content_md5: string | null; file_size: number | null; project_root: string | null; git_remote: string | null }>(
-      `SELECT log.user_id, log.content_md5, log.file_size, analytics.project_root, analytics.git_remote
+      `SELECT log.user_id, log.content_md5, log.file_size::integer AS file_size, analytics.project_root, analytics.git_remote
        FROM team_session_log AS log LEFT JOIN team_session_analytics AS analytics USING (session_id)
        WHERE log.session_id = $1`,
       [sessionId],

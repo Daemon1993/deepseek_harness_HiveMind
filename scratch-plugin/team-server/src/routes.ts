@@ -6,7 +6,7 @@ import { SESSION_FORMAT_VERSION, type SessionHeader, type SessionId } from '@dee
 import type { TeamContext } from "./types.ts";
 import { AuthSessions } from "./auth.ts";
 import { writeTeamLog } from "./team-log.ts";
-import { analyzeSessionEvents } from './session-metrics.ts'
+import { analyzeSessionEvents, sessionTitle } from './session-metrics.ts'
 import { reconcileSessions } from './reconcile.ts'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { readLimitedJson, RequestBodyTooLargeError } from './request-body.ts'
@@ -29,6 +29,53 @@ const DEEPSEEK_PUBLIC_BASE_URL = 'https://api.deepseek.com'
 const DEEPSEEK_API_KEY_REF = credentialRef('DEEPSEEK_API_KEY')
 const sessionSyncQueue = new SessionSyncQueue()
 const unavailableSessionWarnings = new Set<string>()
+const SESSION_SYNC_LOG_QUIET_MS = 500
+
+type SessionSyncSuccess = {
+  mode: 'full' | 'delta'
+  bytes: number
+  total: number
+  sessionId: string
+  userId: string
+}
+
+/** Collapse one user's burst of successful Session uploads into its final log line. */
+function createSessionSyncSuccessLogger(): {
+  record: (success: SessionSyncSuccess) => void
+  dispose: () => void
+} {
+  const pending = new Map<string, { count: number; latest: SessionSyncSuccess; timer: ReturnType<typeof setTimeout> }>()
+  const write = (count: number, latest: SessionSyncSuccess): void => {
+    writeTeamLog({
+      level: 'info',
+      event: 'session.sync.completed',
+      message: `Session synchronized mode=${latest.mode} bytes=${latest.bytes} total=${latest.total}${count > 1 ? ` batch=${count}` : ''}`,
+      sessionId: latest.sessionId,
+      userId: latest.userId,
+    })
+  }
+  return {
+    record(success) {
+      const previous = pending.get(success.userId)
+      if (previous !== undefined) clearTimeout(previous.timer)
+      const count = (previous?.count ?? 0) + 1
+      const timer = setTimeout(() => {
+        const current = pending.get(success.userId)
+        if (current?.timer !== timer) return
+        pending.delete(success.userId)
+        write(current.count, current.latest)
+      }, SESSION_SYNC_LOG_QUIET_MS)
+      pending.set(success.userId, { count, latest: success, timer })
+    },
+    dispose() {
+      for (const { count, latest, timer } of pending.values()) {
+        clearTimeout(timer)
+        write(count, latest)
+      }
+      pending.clear()
+    },
+  }
+}
 
 const adminPage = readFile(new URL("../admin.html", import.meta.url), "utf8");
 const adminScript = readFile(new URL("./admin.js", import.meta.url));
@@ -234,19 +281,22 @@ async function handleAdminUsers(ctx: TeamContext, sessions: AuthSessions, req: I
 async function handleAdminSessions(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
   if (!await requireAdmin(ctx, sessions, req, res)) return
-  sendJson(res, 200, { sessions: await listEnrichedSessionOwners(ctx) })
+  const sessionRows = (await listEnrichedSessionOwners(ctx)).map(({ projectRoot: _projectRoot, ...session }) => session)
+  sendJson(res, 200, { sessions: sessionRows })
 }
 
 async function listEnrichedSessionOwners(ctx: TeamContext) {
   const owners = await ctx.team.listSyncedSessions()
   const analytics = new Map((await ctx.team.listSessionAnalytics()).map(snapshot => [snapshot.sessionId, snapshot]))
   await Promise.all(owners.map(async (owner) => {
-    if (analytics.has(owner.sessionId)) return
+    const existing = analytics.get(owner.sessionId)
+    if ((existing?.metrics as { version?: number } | undefined)?.version === 1) return
     try {
       const inspected = await ctx.sessionController.inspect(owner.sessionId, AbortSignal.timeout(5_000))
       const snapshot = {
+        ...existing,
         sessionId: owner.sessionId,
-        title: '新会话',
+        title: sessionTitle(inspected.events),
         lastActiveAt: inspected.events.at(-1)?.time ?? inspected.meta.createdAt,
         metrics: analyzeSessionEvents(inspected.events),
       }
@@ -297,7 +347,7 @@ async function handleAdminAnalytics(ctx: TeamContext, sessions: AuthSessions, re
   }
   const rangedSessions = allSessions.filter(session => activeAt(session) >= threshold)
   const activeUserIds = new Set(rangedSessions.map(session => session.userId))
-  const directoryPaths = new Set(allSessions.flatMap(session => session.cwd === undefined ? [] : [session.cwd]))
+  const directoryPaths = new Set(allSessions.flatMap(session => session.gitRemote === undefined ? [] : [session.gitRemote]))
   const users = allUsers.map(user => {
     const owned = allSessions.filter(session => session.userId === user.id)
     const ranged = owned.filter(session => activeAt(session) >= threshold)
@@ -310,22 +360,22 @@ async function handleAdminAnalytics(ctx: TeamContext, sessions: AuthSessions, re
       role: user.role,
       sessionCount: owned.length,
       recentSessionCount: ranged.length,
-      directoryCount: new Set(owned.flatMap(session => session.cwd === undefined ? [] : [session.cwd])).size,
+      directoryCount: new Set(owned.flatMap(session => session.gitRemote === undefined ? [] : [session.gitRemote])).size,
       firstUsedAt: owned.length === 0 ? undefined : new Date(Math.min(...owned.map(session => Date.parse(session.createdAt)))).toISOString(),
       lastUsedAt: activeTimes.length === 0 ? undefined : new Date(Math.max(...activeTimes)).toISOString(),
     }
   }).sort((left, right) => right.recentSessionCount - left.recentSessionCount || right.sessionCount - left.sessionCount)
-  const directories = [...allSessions.reduce<Map<string, { path: string; sessionIds: Set<string>; userIds: Set<string>; lastActiveAt: number }>>((groups, session) => {
-    if (session.cwd === undefined) return groups
-    const group = groups.get(session.cwd) ?? { path: session.cwd, sessionIds: new Set(), userIds: new Set(), lastActiveAt: 0 }
+  const directories = [...allSessions.reduce<Map<string, { path: string; name: string; sessionIds: Set<string>; userIds: Set<string>; lastActiveAt: number }>>((groups, session) => {
+    if (session.gitRemote === undefined) return groups
+    const group = groups.get(session.gitRemote) ?? { path: session.gitRemote, name: session.projectName ?? session.gitRemote, sessionIds: new Set(), userIds: new Set(), lastActiveAt: 0 }
     group.sessionIds.add(session.sessionId)
     group.userIds.add(session.userId)
     group.lastActiveAt = Math.max(group.lastActiveAt, activeAt(session))
-    groups.set(session.cwd, group)
+    groups.set(session.gitRemote, group)
     return groups
   }, new Map()).values()].map(group => ({
     path: group.path,
-    name: basename(group.path),
+    name: group.name,
     sessionCount: group.sessionIds.size,
     userCount: group.userIds.size,
     lastActiveAt: new Date(group.lastActiveAt).toISOString(),
@@ -406,7 +456,7 @@ async function handleAdminInsights(ctx: TeamContext, sessions: AuthSessions, req
   for (const { owner, metrics } of inspected) for (const metric of metrics.toolEvents.filter(item => item.time >= threshold)) {
     const row = tools.get(metric.name) ?? { name: metric.name, calls: 0, failures: 0, userIds: new Set(), directories: new Set() }
     row.calls += 1; row.failures += metric.failed ? 1 : 0; row.userIds.add(owner.userId)
-    if (owner.projectRoot !== undefined) row.directories.add(owner.projectRoot)
+    if (owner.gitRemote !== undefined) row.directories.add(owner.gitRemote)
     tools.set(metric.name, row)
   }
   sendJson(res, 200, {
@@ -437,14 +487,14 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
   const threshold = Date.now() - days * 24 * 60 * 60 * 1000
 
   const users = new Map<string, { userId: string; userName: string; sessions: number; projects: Set<string>; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }>()
-  const directories = new Map<string, { id: string; path: string; name: string; gitRemote?: string; sessions: number; users: Map<string, string>; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }>()
+  const directories = new Map<string, { id: string; name: string; gitRemote: string; sessions: number; users: Map<string, string>; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }>()
   const tools = new Map<string, { name: string; calls: number; failures: number; users: Set<string> }>()
   const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }>()
   const trends = new Map<string, { date: string; sessions: number; activeUsers: Set<string>; toolCalls: number; modelRequests: number; totalTokens: number }>()
 
   let totalSessions = 0, totalUserMessages = 0, totalAssistantMessages = 0, totalToolCalls = 0, totalToolFailures = 0
   let totalModelRequests = 0, totalInputTokens = 0, totalOutputTokens = 0, totalTokens = 0, totalActiveMs = 0, totalDurationMs = 0, totalErrors = 0
-  const recentSessions: { sessionId: string; title: string; userId: string; userName: string; projectRoot?: string; gitRemote?: string; lastActiveAt: number; toolCalls: number; durationMs: number; errorCount: number }[] = []
+  const recentSessions: { sessionId: string; title: string; userId: string; userName: string; gitRemote?: string; models: { model: string; requests: number }[]; lastActiveAt: number; toolCalls: number; durationMs: number; errorCount: number }[] = []
 
   for (const { owner, metrics } of inspected) {
     if (metrics.lastTime < threshold) continue
@@ -463,13 +513,12 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
     user.modelRequests += metrics.models.reduce((s, m) => s + m.requests, 0)
     user.totalTokens += metrics.models.reduce((s, m) => s + m.totalTokens, 0)
     user.durationMs += metrics.activeDurationMs; user.lastActiveAt = Math.max(user.lastActiveAt, metrics.lastTime)
-    if (owner.projectRoot !== undefined) user.projects.add(owner.projectRoot)
+    if (owner.gitRemote !== undefined) user.projects.add(owner.gitRemote)
     users.set(owner.userId, user)
 
-    if (owner.projectRoot !== undefined) {
-      const projectId = owner.gitRemote ?? owner.projectRoot
-      const dir = directories.get(projectId) ?? { id: projectId, path: owner.projectRoot, name: owner.projectName ?? basename(owner.projectRoot), ...(owner.gitRemote === undefined ? {} : { gitRemote: owner.gitRemote }), sessions: 0, users: new Map(), messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0 }
-      if (dir.gitRemote === undefined && owner.gitRemote !== undefined) dir.gitRemote = owner.gitRemote
+    if (owner.gitRemote !== undefined) {
+      const projectId = owner.gitRemote
+      const dir = directories.get(projectId) ?? { id: projectId, name: owner.projectName ?? owner.gitRemote, gitRemote: owner.gitRemote, sessions: 0, users: new Map(), messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0 }
       dir.sessions++; dir.users.set(owner.userId, owner.userName)
       dir.messages += metrics.userMessages + metrics.assistantMessages; dir.toolCalls += metrics.toolCalls; dir.toolFailures += metrics.toolFailures
       dir.modelRequests += metrics.models.reduce((s, m) => s + m.requests, 0)
@@ -498,8 +547,8 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
 
     recentSessions.push({
       sessionId: owner.sessionId, title: (owner as { title?: string }).title ?? '新会话', userId: owner.userId, userName: owner.userName,
-      ...(owner.projectRoot === undefined ? {} : { projectRoot: owner.projectRoot }),
       ...(owner.gitRemote === undefined ? {} : { gitRemote: owner.gitRemote }),
+      models: metrics.models.map(({ model, requests }) => ({ model, requests })),
       lastActiveAt: metrics.lastTime, toolCalls: metrics.toolCalls, durationMs: metrics.activeDurationMs, errorCount: metrics.errorCount,
     })
   }
@@ -539,13 +588,20 @@ async function handleAdminSessionTimeline(ctx: TeamContext, sessions: AuthSessio
   try {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(5_000))
     const metrics = analyzeSessionEvents(inspected.events)
-    sendJson(res, 200, { session: { ...owner, ...(inspected.meta.cwd === undefined ? {} : { cwd: inspected.meta.cwd }) }, metrics, timeline: metrics.timeline })
+    const { projectRoot: _projectRoot, ...publicOwner } = owner
+    sendJson(res, 200, { session: publicOwner, metrics, timeline: metrics.timeline })
   } catch {
     sendJson(res, 404, { message: '会话记录不可用' })
   }
 }
 
-async function handleSyncSession(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleSyncSession(
+  ctx: TeamContext,
+  sessions: AuthSessions,
+  logSuccess: (success: SessionSyncSuccess) => void,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   if (req.method !== 'POST') { sendJson(res, 405, { message: '只支持 POST 请求' }); return }
   const userId = await sessions.clientUserId(req)
   if (userId === undefined) { sendJson(res, 401, { message: '客户端 Token 无效或已过期' }); return }
@@ -630,13 +686,20 @@ async function handleSyncSession(ctx: TeamContext, sessions: AuthSessions, req: 
           ...(projectRoot === undefined ? {} : { projectName: basename(projectRoot) }),
           ...(projectRoot === undefined ? {} : { projectRoot }),
           ...(gitRemote === undefined ? {} : { gitRemote }),
-          title: projectRoot === undefined ? '新会话' : basename(projectRoot),
+          title: sessionTitle(inspected.events),
           lastActiveAt: inspected.events.at(-1)?.time ?? inspected.meta.createdAt,
           metrics: analyzeSessionEvents(inspected.events),
         })
       } catch (error) {
         writeTeamLog({ level: 'warn', event: 'session.analytics.persist_failed', message: error instanceof Error ? error.message : String(error), sessionId, userId })
       }
+      logSuccess({
+        mode: base === undefined ? 'full' : 'delta',
+        bytes: logBytes.byteLength,
+        total: totalSize,
+        sessionId,
+        userId,
+      })
       sendJson(res, 200, { ok: true, contentMd5 })
     } catch (error) {
       if (error instanceof SessionSyncBaseMismatchError) {
@@ -747,10 +810,11 @@ async function handleAdminSyncStatus(ctx: TeamContext, sessions: AuthSessions, r
   if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
   if (!await requireAdmin(ctx, sessions, req, res)) return
   const rows = await ctx.team.listSyncStatus()
+  const titles = new Map((await listEnrichedSessionOwners(ctx)).map(row => [row.sessionId, row.title]))
   const users = new Map<string, {
     userId: string
     userName: string
-    sessions: { sessionId: string; updatedAt: string }[]
+    sessions: { sessionId: string; updatedAt: string; title?: string }[]
     lastSyncAt: string | undefined
   }>()
   for (const row of rows) {
@@ -760,7 +824,7 @@ async function handleAdminSyncStatus(ctx: TeamContext, sessions: AuthSessions, r
       sessions: [],
       lastSyncAt: undefined,
     }
-    user.sessions.push({ sessionId: row.sessionId, updatedAt: row.updatedAt })
+    user.sessions.push({ sessionId: row.sessionId, updatedAt: row.updatedAt, ...(titles.get(row.sessionId) === undefined ? {} : { title: titles.get(row.sessionId) }) })
     user.lastSyncAt = user.lastSyncAt === undefined || row.updatedAt > user.lastSyncAt ? row.updatedAt : user.lastSyncAt
     users.set(row.userId, user)
   }
@@ -995,6 +1059,7 @@ async function handleLogout(sessions: AuthSessions, req: IncomingMessage, res: S
 /** Register the team platform's HTTP routes and return their disposer. */
 export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promise<void>> {
   const sessions = await AuthSessions.connect()
+  const syncSuccessLogger = createSessionSyncSuccessLogger()
   const disposers = [ctx.webServer.tapIndex(injectAdminAuthGuard), ctx.webServer.register({
     kind: "exact",
     path: "/team/me",
@@ -1034,7 +1099,7 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   }),
   ctx.webServer.register({ kind: 'exact', path: '/team/api/admin-ticket', handler: (req, res) => handleAdminTicket(sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/consume', handler: (req, res) => handleAdminConsume(sessions, req, res) }),
-  ctx.webServer.register({ kind: 'exact', path: '/team/api/sync/session', handler: (req, res) => handleSyncSession(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/team/api/sync/session', handler: (req, res) => handleSyncSession(ctx, sessions, syncSuccessLogger.record, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/api/sync/session/status', handler: (req, res) => handleSyncSessionStatus(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/api/sync/sessions', handler: (req, res) => handleSyncSessions(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/api/git/ops', handler: (req, res) => handleGitOps(ctx, sessions, req, res) }),
@@ -1062,6 +1127,7 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
 
   return async () => {
     for (const dispose of disposers.reverse()) dispose()
+    syncSuccessLogger.dispose()
     await sessions.close()
   }
 }
