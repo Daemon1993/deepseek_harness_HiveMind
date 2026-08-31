@@ -31,6 +31,14 @@ pnpm pack
 
 Session 同步把上传内容视为 Server 副本的候选版本。编码请求上限容纳一个 50 MiB 二进制上传经过 Base64 膨胀后的内容以及 64 KiB JSON 元数据；更大的请求会在 JSON 解析前返回 HTTP 413。对于增量上传，Server 在把已有副本流式复制到临时文件时校验基准 MD5 并计算完整 MD5，再追加上传字节，不构造完整的内存缓冲区。当前 Session persistence provider 解析临时候选后才确认上传；校验失败会恢复已有副本。同一 Session 的上传按顺序处理，不同 Session 可并行。
 
+同一用户短时间内连续成功发布时只输出最后一条 `session.sync.completed` 运行日志，可选的 `batch` 数量表示该日志合并的成功次数；日志不记录 Session 内容。
+
+PostgreSQL 的 `BIGINT` Session 文件大小会在查询时转换为整数，再进入 HTTP 状态接口；传输协议中的 `fileSize` 始终为 JSON 数字。
+
+后台会话列表使用 Session 日志中最新的 `session/title` 作为对话名称，Session ID 作为副信息，并列出该会话实际使用过的 provider/model 与请求次数。管理响应与页面不返回 Client 本地目录；存在 Git remote 时才关联项目，并显示远程仓库地址。
+
+统计快照带有投影版本；Server 首次读取旧版快照时从 Session 副本重算一次，后续请求继续直接读取 SQL。
+
 发布完成后，Server 把不含内容的 Session 分析快照写入 PostgreSQL。Client 通过 Git 获取仓库根目录和可选的 `remote.origin.url`；普通工作区没有项目字段，也不会进入项目统计。快照包含项目名称、Git 字段、标题、活动时间、计数、耗时、工具聚合与模型用量，不包含工作区路径、消息、工具参数、命令输出或文件内容。总览、用户和项目页面直接聚合这些快照，不会重新打开每个 Session 文件。管理员首次查看缺少快照的历史 Session 时，Server 会补建快照；单个 Session 时间线仍按需读取原生 Session 工件及其工作区路径。
 
 通过 `./start-local.ps1` 启动本地 Server，默认监听 3081 端口。

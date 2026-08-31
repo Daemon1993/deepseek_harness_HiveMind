@@ -12,6 +12,8 @@ export interface ToolMetric { name: string; calls: number; failures: number; tot
 export interface ModelMetric { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }
 
 export interface SessionMetrics {
+  /** Analytics projection version used to refresh snapshots after parser changes. */
+  version: 1
   userMessages: number
   assistantMessages: number
   toolCalls: number
@@ -47,6 +49,17 @@ function configuredModel(data: Record<string, unknown> | undefined): string {
 
 function failedToolResult(data: Record<string, unknown> | undefined): boolean {
   return data?.error !== undefined || record(data?.message)?.isError === true
+}
+
+/** Return the latest durable conversation title, or the supplied fallback. */
+export function sessionTitle(events: readonly unknown[], fallback = '新会话'): string {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = record(events[index])
+    if (event?.type !== 'session/title') continue
+    const title = record(event.data)?.title
+    if (typeof title === 'string' && title.trim() !== '') return title
+  }
+  return fallback
 }
 
 /** Extract safe administrative metrics from one durable DSH session event log. */
@@ -164,6 +177,7 @@ export function analyzeSessionEvents(events: readonly unknown[]): SessionMetrics
     : 0
 
   return {
+    version: 1,
     userMessages,
     assistantMessages,
     toolCalls,

@@ -160,7 +160,7 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
       warned.delete(`${sessionId}:read`)
       if (!reportedSync.has(sessionId)) {
         reportedSync.add(sessionId)
-        syncLog('info', `session synced sid=${sessionId.slice(0, 8)} mode=${baseSize === undefined ? 'full' : 'delta'}`)
+        syncLog('info', `session synced sid=${sessionId.slice(9, 17)} mode=${baseSize === undefined ? 'full' : 'delta'}`)
       }
       return 'synced'
     } catch (error) {
