@@ -1,7 +1,6 @@
 # HiveMind · DSH 团队平台
 
-> 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) **插件系统**构建的团队 AI 平台——不改一行 DSH 核心代码，全部能力由插件组合实现。
-> 官方 DSH 文档见 `docs/` 与上游仓库。
+> 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) **插件系统**构建的团队 AI 平台。
 
 多员工团队 AI 平台：每个员工在本地跑自己的 DSH 实例，一台中央服务器统一认证、代理模型流量、归档会话、跟踪 Git/代码变更，并提供管理后台。北向愿景是"企业 AI 知识中枢"——把员工的 AI 工作过程沉淀成可检索、可复用的公司知识。
 
