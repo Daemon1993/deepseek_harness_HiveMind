@@ -9,6 +9,12 @@ import { promisify } from 'node:util'
 const COMPANY_TOKEN_REF = credentialRef('TEAM_COMPANY_TOKEN')
 const run = promisify(execFile)
 
+function gitLog(level: 'info' | 'warn', message: string): void {
+  const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [team-client.git] ${message}`
+  if (level === 'warn') console.warn(line)
+  else console.info(line)
+}
+
 /** git 子命令 → 记录的动作；只读命令（status/diff/log）与未知命令跳过。 */
 function classifyGit(command: string): string | undefined {
   const sub = command.replace(/^git\s+/, '').split(/\s+/)[0] ?? ''
@@ -51,6 +57,7 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
       const time = Date.now()
       const headers = await authHeaders()
       if (headers === undefined) return
+      gitLog('info', `capture action=${action} cwd=${cwd ?? '?'}`)
       // ① git 操作记录
       await fetch(`${serverURL}/team/api/git/ops`, {
         method: 'POST', headers,
@@ -68,7 +75,9 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
           }),
         }).catch(() => undefined)
       }
-    } catch { /* 抓取失败静默：不影响工具执行 */ }
+    } catch (error) {
+      gitLog('warn', `capture failed: ${String(error)}`)
+    }
   }
 
   // 官方水瀑事件：必须调用 next() 委托；上传 fire-and-forget 不阻塞工具管线。
