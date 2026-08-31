@@ -1,9 +1,23 @@
 # HiveMind · DSH 团队平台
 
-> 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 构建的团队 AI 平台。
+> 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) **插件系统**构建的团队 AI 平台——不改一行 DSH 核心代码，全部能力由插件组合实现。
 > 官方 DSH 文档见 `docs/` 与上游仓库。
 
 多员工团队 AI 平台：每个员工在本地跑自己的 DSH 实例，一台中央服务器统一认证、代理模型流量、归档会话、跟踪 Git/代码变更，并提供管理后台。北向愿景是"企业 AI 知识中枢"——把员工的 AI 工作过程沉淀成可检索、可复用的公司知识。
+
+## 构建在 DSH 插件系统之上
+
+HiveMind 是两个 Cordis 插件包（`dsh-team-server` + `dsh-team-client`），通过 DSH 官方扩展点组合出全部能力，核心零改动：
+
+| 扩展点 | 用途 |
+|---|---|
+| `webServer.register / tapIndex / registerFallback` | 挂载路由、注入登录守卫、接管根路径重定向 |
+| `cordis.patch.yml`（`!!js` 配置分叉） | 替换 `llm-deepseek` 的 `baseURL` + `apiKeyEnv`，模型流量搬到网关 |
+| `session/flush` · `created` · `disposed` | 触发会话增量同步（DSH 持久化提交边界） |
+| `tools/post-execute` | 检测 Git 命令、提取代码变更元数据 |
+| `credentials` 服务 | Host 托管公司 token（永不进浏览器） |
+| `ctx.effect()` 生命周期 | 路由/监听器的注册与清理 |
+| `sidebar.footer.action` Client Slot | 同步横幅、账号状态 UI |
 
 > 两个插件包：`dsh-team-server`（服务器侧）+ `dsh-team-client`（员工侧）。同一份 DSH 应用，靠环境变量分叉角色。
 
