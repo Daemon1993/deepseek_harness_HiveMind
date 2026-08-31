@@ -14,7 +14,7 @@ The Team Server writes one content-free analytics snapshot to PostgreSQL after e
 
 Analytics requests read the SQL snapshots. When an ownership row has no snapshot, the Server inspects that native Session artifact once and persists the missing snapshot before returning the result. Session timeline requests continue to inspect the native artifact because the SQL snapshot deliberately omits conversation content and detailed event payloads.
 
-The administration console exposes separate User and Project sections. Both sections use the same time-range rules and aggregate the same Session snapshots, so their totals remain consistent with the overview.
+The administration console exposes separate User and Project sections. Both sections use the same time-range rules and aggregate the same Session snapshots, so their totals remain consistent with the overview. A Session detail drawer projects the safe timeline as a compact event rail, a scrollable event list, and a selected-event inspector. The inspector shows model identity and token usage or tool identity, status, and duration without exposing message content, tool arguments, results, command output, or files.
 
 ## Data minimization
 
