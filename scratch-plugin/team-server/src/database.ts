@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import type { TeamLogRecord, TeamRole, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
+import type { TeamLogRecord, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
 import { readTeamConfig } from './config.ts'
 
 export type TeamAccount = TeamUser & { password: string }
@@ -77,6 +77,24 @@ export class TeamDatabase {
     await this.pool.query('ALTER TABLE team_session_log ADD COLUMN IF NOT EXISTS file_size BIGINT')
     await this.pool.query('ALTER TABLE team_session_log DROP COLUMN IF EXISTS next_seq')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_session_log_user_id_idx ON team_session_log (user_id, updated_at DESC)')
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS team_session_analytics (
+        session_id TEXT PRIMARY KEY REFERENCES team_session_log(session_id) ON DELETE CASCADE,
+        project_name TEXT,
+        project_root TEXT,
+        git_remote TEXT,
+        title TEXT NOT NULL,
+        last_active_at BIGINT NOT NULL,
+        metrics JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `)
+    await this.pool.query('ALTER TABLE team_session_analytics ADD COLUMN IF NOT EXISTS project_root TEXT')
+    await this.pool.query('ALTER TABLE team_session_analytics ADD COLUMN IF NOT EXISTS git_remote TEXT')
+    await this.pool.query('ALTER TABLE team_session_analytics ADD COLUMN IF NOT EXISTS project_name TEXT')
+    await this.pool.query('ALTER TABLE team_session_analytics DROP COLUMN IF EXISTS cwd')
+    await this.pool.query('DROP INDEX IF EXISTS team_session_analytics_cwd_idx')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_session_analytics_project_idx ON team_session_analytics (git_remote, project_root, last_active_at DESC)')
     // 旧的事件行存储废弃：事件本体改为 server 自己的 DSH 原生会话文件，
     // 这里只保留归属；client 重启后会全量补传，旧数据不需要迁移。
     await this.pool.query('DROP TABLE IF EXISTS team_session_events')
@@ -215,14 +233,16 @@ export class TeamDatabase {
   }
 
   /** Read one synced Session's ownership and stored file marker. */
-  async readSessionMarker(sessionId: string): Promise<{ userId: string; contentMd5: string | null; fileSize: number | null } | undefined> {
-    const result = await this.client().query<{ user_id: string; content_md5: string | null; file_size: number | null }>(
-      'SELECT user_id, content_md5, file_size FROM team_session_log WHERE session_id = $1',
+  async readSessionMarker(sessionId: string): Promise<{ userId: string; contentMd5: string | null; fileSize: number | null; projectRoot?: string; gitRemote?: string } | undefined> {
+    const result = await this.client().query<{ user_id: string; content_md5: string | null; file_size: number | null; project_root: string | null; git_remote: string | null }>(
+      `SELECT log.user_id, log.content_md5, log.file_size, analytics.project_root, analytics.git_remote
+       FROM team_session_log AS log LEFT JOIN team_session_analytics AS analytics USING (session_id)
+       WHERE log.session_id = $1`,
       [sessionId],
     )
     const row = result.rows[0]
     if (row === undefined) return undefined
-    return { userId: row.user_id, contentMd5: row.content_md5, fileSize: row.file_size }
+    return { userId: row.user_id, contentMd5: row.content_md5, fileSize: row.file_size, ...(row.project_root === null ? {} : { projectRoot: row.project_root }), ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }) }
   }
 
   /** All synced Session ownership rows with their owning user, newest activity first. */
@@ -258,6 +278,39 @@ export class TeamDatabase {
       userId: row.user_id,
       userName: row.user_name,
       updatedAt: row.updated_at.toISOString(),
+    }))
+  }
+
+  /** Upsert the content-free analytics projection produced after a successful sync. */
+  async saveSessionAnalytics(snapshot: TeamSessionAnalytics): Promise<void> {
+    await this.client().query(
+      `INSERT INTO team_session_analytics (session_id, project_name, project_root, git_remote, title, last_active_at, metrics)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       ON CONFLICT (session_id) DO UPDATE SET
+         project_name = EXCLUDED.project_name,
+         project_root = EXCLUDED.project_root,
+         git_remote = EXCLUDED.git_remote,
+         title = EXCLUDED.title,
+         last_active_at = EXCLUDED.last_active_at,
+         metrics = EXCLUDED.metrics,
+         updated_at = NOW()`,
+      [snapshot.sessionId, snapshot.projectName ?? null, snapshot.projectRoot ?? null, snapshot.gitRemote ?? null, snapshot.title, snapshot.lastActiveAt, JSON.stringify(snapshot.metrics)],
+    )
+  }
+
+  /** Read all persisted analytics snapshots without opening Session files. */
+  async listSessionAnalytics(): Promise<TeamSessionAnalytics[]> {
+    const result = await this.client().query<{ session_id: string; project_name: string | null; project_root: string | null; git_remote: string | null; title: string; last_active_at: string; metrics: TeamSessionAnalytics['metrics'] }>(
+      'SELECT session_id, project_name, project_root, git_remote, title, last_active_at, metrics FROM team_session_analytics ORDER BY last_active_at DESC',
+    )
+    return result.rows.map(row => ({
+      sessionId: row.session_id,
+      ...(row.project_name === null ? {} : { projectName: row.project_name }),
+      ...(row.project_root === null ? {} : { projectRoot: row.project_root }),
+      ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }),
+      title: row.title,
+      lastActiveAt: Number(row.last_active_at),
+      metrics: row.metrics,
     }))
   }
 

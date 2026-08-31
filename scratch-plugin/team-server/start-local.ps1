@@ -13,8 +13,6 @@ foreach ($envFile in $envFiles) {
     }
   }
 }
-[Environment]::SetEnvironmentVariable('TEAM_ROLE', 'server', 'Process')
-
 Set-Location $repositoryRoot
 pnpm dsh web --port 3081
 exit $LASTEXITCODE

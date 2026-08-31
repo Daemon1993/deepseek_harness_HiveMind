@@ -3,6 +3,8 @@ import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import type { SessionMetrics } from './session-metrics.ts'
 
 /** Roles used by the team platform. */
 export type TeamRole = 'admin' | 'developer' | 'reviewer' | 'user'
@@ -52,7 +54,10 @@ export interface TeamSessionController {
       projections?: { values: Record<string, unknown> }
     }[]
   }>
-  inspect(sessionId: string, signal?: AbortSignal): Promise<{ events: readonly unknown[] }>
+  inspect(sessionId: string, signal?: AbortSignal): Promise<{
+    meta: SessionHeader
+    events: readonly SessionEvent[]
+  }>
 }
 
 /** One Session row synced to the team server, as returned to its owner. */
@@ -80,6 +85,17 @@ export interface TeamSessionSyncState {
   userId: string
   userName: string
   updatedAt: string
+}
+
+/** SQL-backed, content-free analytics snapshot for one synced Session. */
+export interface TeamSessionAnalytics {
+  sessionId: string
+  projectName?: string
+  projectRoot?: string
+  gitRemote?: string
+  title: string
+  lastActiveAt: number
+  metrics: SessionMetrics
 }
 
 /** One Git operation record uploaded by a Local DSH. */
@@ -110,7 +126,7 @@ export interface TeamServiceApi {
   updateUser(id: string, patch: Pick<TeamUser, 'name' | 'status' | 'role'>, password?: string): Promise<TeamUser | undefined>
   deleteUser(id: string): Promise<boolean>
   ensureSessionOwner(sessionId: string, userId: string): Promise<'ok' | 'conflict'>
-  readSessionMarker(sessionId: string): Promise<{ userId: string; contentMd5: string | null; fileSize: number | null } | undefined>
+  readSessionMarker(sessionId: string): Promise<{ userId: string; contentMd5: string | null; fileSize: number | null; projectRoot?: string; gitRemote?: string } | undefined>
   markSessionSynced(sessionId: string, contentMd5: string, fileSize: number): Promise<void>
   clearSessionMarker(sessionId: string): Promise<void>
   deleteSyncedSession(sessionId: string): Promise<boolean>
@@ -119,6 +135,8 @@ export interface TeamServiceApi {
   listOwnSessions(userId: string): Promise<readonly TeamSyncedSession[]>
   listSyncedSessions(): Promise<readonly TeamSyncedSessionDetail[]>
   listSyncStatus(): Promise<readonly TeamSessionSyncState[]>
+  saveSessionAnalytics(snapshot: TeamSessionAnalytics): Promise<void>
+  listSessionAnalytics(): Promise<readonly TeamSessionAnalytics[]>
   audit(entry: TeamAuditLogInput): Promise<void>
 }
 

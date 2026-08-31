@@ -1,6 +1,6 @@
-import { open, readFile, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { basename, dirname } from 'node:path'
+import { basename } from 'node:path'
 import type {} from "@deepseek-ai/dsh-host-webserver";
 import { SESSION_FORMAT_VERSION, type SessionHeader, type SessionId } from '@deepseek-ai/dsh-session'
 import type { TeamContext } from "./types.ts";
@@ -9,11 +9,26 @@ import { writeTeamLog } from "./team-log.ts";
 import { analyzeSessionEvents } from './session-metrics.ts'
 import { reconcileSessions } from './reconcile.ts'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import { readLimitedJson, RequestBodyTooLargeError } from './request-body.ts'
+import {
+  buildSessionCandidate,
+  publishValidatedSession,
+  SessionSyncBaseMismatchError,
+  SessionSyncContentMismatchError,
+  SessionSyncQueue,
+  SessionSyncValidationError,
+} from './session-sync-storage.ts'
 
 const MODEL_REQUEST_MAX_BYTES = 50 * 1024 * 1024
 const MODEL_FILE_MAX_BYTES = 128 * 1024 * 1024  // DeepSeek 单文件上传上限
+const SESSION_SYNC_RAW_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
+const SESSION_SYNC_METADATA_MAX_BYTES = 64 * 1024
+export const SESSION_SYNC_REQUEST_MAX_BYTES = 4 * Math.ceil(SESSION_SYNC_RAW_UPLOAD_MAX_BYTES / 3)
+  + SESSION_SYNC_METADATA_MAX_BYTES
 const DEEPSEEK_PUBLIC_BASE_URL = 'https://api.deepseek.com'
 const DEEPSEEK_API_KEY_REF = credentialRef('DEEPSEEK_API_KEY')
+const sessionSyncQueue = new SessionSyncQueue()
+const unavailableSessionWarnings = new Set<string>()
 
 const adminPage = readFile(new URL("../admin.html", import.meta.url), "utf8");
 const adminScript = readFile(new URL("./admin.js", import.meta.url));
@@ -224,27 +239,44 @@ async function handleAdminSessions(ctx: TeamContext, sessions: AuthSessions, req
 
 async function listEnrichedSessionOwners(ctx: TeamContext) {
   const owners = await ctx.team.listSyncedSessions()
-  // 容错：个别会话文件损坏不应拖垮整个分析端点——list 失败时降级为空列表。
-  let listed: Awaited<ReturnType<typeof ctx.sessionController.list>> = { items: [] }
-  try {
-    listed = await ctx.sessionController.list({}, AbortSignal.timeout(5_000))
-  } catch (error) {
-    writeTeamLog({ level: 'warn', event: 'analytics.session.list_failed', message: error instanceof Error ? error.message : String(error) })
-  }
-  const summaries = new Map(listed.items.map(item => [item.sessionId, item]))
-  return owners.map(owner => {
-    const base = { ...owner, lastActiveAt: owner.updatedAt, cwd: undefined as string | undefined }
-    const summary = summaries.get(owner.sessionId)
-    if (summary === undefined) return base
-    const title = typeof summary.projections?.values.title === 'string'
-      ? summary.projections.values.title
-      : summary.blank ? '新会话' : summary.cwd === undefined ? undefined : basename(summary.cwd)
+  const analytics = new Map((await ctx.team.listSessionAnalytics()).map(snapshot => [snapshot.sessionId, snapshot]))
+  await Promise.all(owners.map(async (owner) => {
+    if (analytics.has(owner.sessionId)) return
+    try {
+      const inspected = await ctx.sessionController.inspect(owner.sessionId, AbortSignal.timeout(5_000))
+      const snapshot = {
+        sessionId: owner.sessionId,
+        title: '新会话',
+        lastActiveAt: inspected.events.at(-1)?.time ?? inspected.meta.createdAt,
+        metrics: analyzeSessionEvents(inspected.events),
+      }
+      await ctx.team.saveSessionAnalytics(snapshot)
+      analytics.set(owner.sessionId, snapshot)
+      unavailableSessionWarnings.delete(owner.sessionId)
+    } catch (error) {
+      if (!unavailableSessionWarnings.has(owner.sessionId)) {
+        unavailableSessionWarnings.add(owner.sessionId)
+        writeTeamLog({
+          level: 'warn',
+          event: 'analytics.session.inspect_failed',
+          message: error instanceof Error ? error.message : String(error),
+          sessionId: owner.sessionId,
+        })
+      }
+    }
+  }))
+  return owners.map((owner) => {
+    const base = { ...owner, lastActiveAt: owner.updatedAt }
+    const snapshot = analytics.get(owner.sessionId)
+    if (snapshot === undefined) return base
     return {
       ...base,
-      ...(title === undefined ? {} : { title }),
-      ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
-      updatedAt: summary.updatedAt,
-      blank: summary.blank,
+      title: snapshot.title,
+      ...(snapshot.projectName === undefined ? {} : { projectName: snapshot.projectName }),
+      ...(snapshot.projectRoot === undefined ? {} : { projectRoot: snapshot.projectRoot }),
+      ...(snapshot.gitRemote === undefined ? {} : { gitRemote: snapshot.gitRemote }),
+      updatedAt: snapshot.lastActiveAt,
+      blank: snapshot.metrics.timeline.length === 0,
     }
   })
 }
@@ -325,15 +357,8 @@ function requestedDays(req: IncomingMessage): 1 | 7 | 30 | undefined {
 }
 
 async function inspectOwnedSessions(ctx: TeamContext, owners: Awaited<ReturnType<typeof listEnrichedSessionOwners>>) {
-  return Promise.all(owners.map(async owner => {
-    try {
-      const inspected = await ctx.sessionController.inspect(owner.sessionId, AbortSignal.timeout(5_000))
-      return { owner, metrics: analyzeSessionEvents(inspected.events) }
-    } catch (error) {
-      writeTeamLog({ level: 'warn', event: 'analytics.session.inspect_failed', sessionId: owner.sessionId, message: error instanceof Error ? error.message : String(error) })
-      return { owner, metrics: analyzeSessionEvents([]) }
-    }
-  }))
+  const analytics = new Map((await ctx.team.listSessionAnalytics()).map(snapshot => [snapshot.sessionId, snapshot.metrics]))
+  return owners.map(owner => ({ owner, metrics: analytics.get(owner.sessionId) ?? analyzeSessionEvents([]) }))
 }
 
 async function handleAdminInsights(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -381,7 +406,7 @@ async function handleAdminInsights(ctx: TeamContext, sessions: AuthSessions, req
   for (const { owner, metrics } of inspected) for (const metric of metrics.toolEvents.filter(item => item.time >= threshold)) {
     const row = tools.get(metric.name) ?? { name: metric.name, calls: 0, failures: 0, userIds: new Set(), directories: new Set() }
     row.calls += 1; row.failures += metric.failed ? 1 : 0; row.userIds.add(owner.userId)
-    if (owner.cwd !== undefined) row.directories.add(owner.cwd)
+    if (owner.projectRoot !== undefined) row.directories.add(owner.projectRoot)
     tools.set(metric.name, row)
   }
   sendJson(res, 200, {
@@ -411,15 +436,15 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
   const inspected = await inspectOwnedSessions(ctx, owners)
   const threshold = Date.now() - days * 24 * 60 * 60 * 1000
 
-  const users = new Map<string, { userId: string; userName: string; sessions: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number }>()
-  const directories = new Map<string, { path: string; name: string; sessions: number; users: Set<string>; toolCalls: number; modelRequests: number; totalTokens: number; lastActiveAt: number }>()
+  const users = new Map<string, { userId: string; userName: string; sessions: number; projects: Set<string>; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }>()
+  const directories = new Map<string, { id: string; path: string; name: string; gitRemote?: string; sessions: number; users: Map<string, string>; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }>()
   const tools = new Map<string, { name: string; calls: number; failures: number; users: Set<string> }>()
   const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }>()
   const trends = new Map<string, { date: string; sessions: number; activeUsers: Set<string>; toolCalls: number; modelRequests: number; totalTokens: number }>()
 
   let totalSessions = 0, totalUserMessages = 0, totalAssistantMessages = 0, totalToolCalls = 0, totalToolFailures = 0
   let totalModelRequests = 0, totalInputTokens = 0, totalOutputTokens = 0, totalTokens = 0, totalActiveMs = 0, totalDurationMs = 0, totalErrors = 0
-  const recentSessions: { sessionId: string; title: string; userName: string; cwd?: string; lastActiveAt: number; toolCalls: number; durationMs: number; errorCount: number }[] = []
+  const recentSessions: { sessionId: string; title: string; userId: string; userName: string; projectRoot?: string; gitRemote?: string; lastActiveAt: number; toolCalls: number; durationMs: number; errorCount: number }[] = []
 
   for (const { owner, metrics } of inspected) {
     if (metrics.lastTime < threshold) continue
@@ -432,20 +457,25 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
     totalTokens += metrics.models.reduce((s, m) => s + m.totalTokens, 0)
     totalActiveMs += metrics.activeDurationMs; totalDurationMs += metrics.durationMs; totalErrors += metrics.errorCount
 
-    const user = users.get(owner.userId) ?? { userId: owner.userId, userName: owner.userName, sessions: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0, durationMs: 0 }
+    const user = users.get(owner.userId) ?? { userId: owner.userId, userName: owner.userName, sessions: 0, projects: new Set(), messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0 }
     user.sessions++; user.toolCalls += metrics.toolCalls; user.toolFailures += metrics.toolFailures
+    user.messages += metrics.userMessages + metrics.assistantMessages; user.errors += metrics.errorCount
     user.modelRequests += metrics.models.reduce((s, m) => s + m.requests, 0)
     user.totalTokens += metrics.models.reduce((s, m) => s + m.totalTokens, 0)
-    user.durationMs += metrics.activeDurationMs
+    user.durationMs += metrics.activeDurationMs; user.lastActiveAt = Math.max(user.lastActiveAt, metrics.lastTime)
+    if (owner.projectRoot !== undefined) user.projects.add(owner.projectRoot)
     users.set(owner.userId, user)
 
-    if (owner.cwd !== undefined) {
-      const dir = directories.get(owner.cwd) ?? { path: owner.cwd, name: basename(owner.cwd), sessions: 0, users: new Set(), toolCalls: 0, modelRequests: 0, totalTokens: 0, lastActiveAt: 0 }
-      dir.sessions++; dir.users.add(owner.userId)
-      dir.toolCalls += metrics.toolCalls; dir.modelRequests += metrics.models.reduce((s, m) => s + m.requests, 0)
+    if (owner.projectRoot !== undefined) {
+      const projectId = owner.gitRemote ?? owner.projectRoot
+      const dir = directories.get(projectId) ?? { id: projectId, path: owner.projectRoot, name: owner.projectName ?? basename(owner.projectRoot), ...(owner.gitRemote === undefined ? {} : { gitRemote: owner.gitRemote }), sessions: 0, users: new Map(), messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0 }
+      if (dir.gitRemote === undefined && owner.gitRemote !== undefined) dir.gitRemote = owner.gitRemote
+      dir.sessions++; dir.users.set(owner.userId, owner.userName)
+      dir.messages += metrics.userMessages + metrics.assistantMessages; dir.toolCalls += metrics.toolCalls; dir.toolFailures += metrics.toolFailures
+      dir.modelRequests += metrics.models.reduce((s, m) => s + m.requests, 0)
       dir.totalTokens += metrics.models.reduce((s, m) => s + m.totalTokens, 0)
-      dir.lastActiveAt = Math.max(dir.lastActiveAt, metrics.lastTime)
-      directories.set(owner.cwd, dir)
+      dir.durationMs += metrics.activeDurationMs; dir.errors += metrics.errorCount; dir.lastActiveAt = Math.max(dir.lastActiveAt, metrics.lastTime)
+      directories.set(projectId, dir)
     }
 
     for (const tool of metrics.tools) {
@@ -467,8 +497,9 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
     trends.set(date, trend)
 
     recentSessions.push({
-      sessionId: owner.sessionId, title: (owner as { title?: string }).title ?? '新会话', userName: owner.userName,
-      ...(owner.cwd === undefined ? {} : { cwd: owner.cwd }),
+      sessionId: owner.sessionId, title: (owner as { title?: string }).title ?? '新会话', userId: owner.userId, userName: owner.userName,
+      ...(owner.projectRoot === undefined ? {} : { projectRoot: owner.projectRoot }),
+      ...(owner.gitRemote === undefined ? {} : { gitRemote: owner.gitRemote }),
       lastActiveAt: metrics.lastTime, toolCalls: metrics.toolCalls, durationMs: metrics.activeDurationMs, errorCount: metrics.errorCount,
     })
   }
@@ -491,8 +522,8 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
       activeDurationMs: totalActiveMs, durationMs: totalDurationMs, errors: totalErrors,
     },
     trends: [...trends.values()].map(({ activeUsers, ...t }) => ({ ...t, activeUsers: activeUsers.size })).sort((a, b) => a.date.localeCompare(b.date)),
-    users: [...users.values()].sort((a, b) => b.totalTokens - a.totalTokens),
-    directories: [...directories.values()].map(({ users: u, ...d }) => ({ ...d, users: u.size })).sort((a, b) => b.sessions - a.sessions),
+    users: [...users.values()].map(({ projects, ...user }) => ({ ...user, projects: projects.size })).sort((a, b) => b.totalTokens - a.totalTokens),
+    directories: [...directories.values()].map(({ users: members, ...directory }) => ({ ...directory, users: members.size, members: [...members].map(([userId, userName]) => ({ userId, userName })) })).sort((a, b) => b.sessions - a.sessions),
     tools: [...tools.values()].map(({ users: u, ...t }) => ({ ...t, users: u.size })).sort((a, b) => b.calls - a.calls),
     models: [...models.values()].sort((a, b) => b.requests - a.requests),
     recentSessions,
@@ -508,7 +539,7 @@ async function handleAdminSessionTimeline(ctx: TeamContext, sessions: AuthSessio
   try {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(5_000))
     const metrics = analyzeSessionEvents(inspected.events)
-    sendJson(res, 200, { session: owner, metrics, timeline: metrics.timeline })
+    sendJson(res, 200, { session: { ...owner, ...(inspected.meta.cwd === undefined ? {} : { cwd: inspected.meta.cwd }) }, metrics, timeline: metrics.timeline })
   } catch {
     sendJson(res, 404, { message: '会话记录不可用' })
   }
@@ -519,81 +550,114 @@ async function handleSyncSession(ctx: TeamContext, sessions: AuthSessions, req: 
   const userId = await sessions.clientUserId(req)
   if (userId === undefined) { sendJson(res, 401, { message: '客户端 Token 无效或已过期' }); return }
   let input: unknown
-  try { input = await readJson(req) } catch { sendJson(res, 400, { message: '请求格式错误' }); return }
+  try {
+    input = await readLimitedJson(req, SESSION_SYNC_REQUEST_MAX_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      sendJson(res, 413, { message: 'Session 同步请求体过大' })
+      return
+    }
+    sendJson(res, 400, { message: '请求格式错误' })
+    return
+  }
   if (typeof input !== 'object' || input === null
     || !('sessionId' in input) || typeof input.sessionId !== 'string' || input.sessionId === ''
     || !('header' in input) || typeof input.header !== 'object' || input.header === null
     || !('log' in input) || typeof input.log !== 'string' || input.log.length === 0
-    || !('contentMd5' in input) || typeof input.contentMd5 !== 'string'
-    || !('totalSize' in input) || typeof input.totalSize !== 'number') {
+    || !('contentMd5' in input) || typeof input.contentMd5 !== 'string' || !/^[a-f0-9]{32}$/u.test(input.contentMd5)
+    || !('totalSize' in input) || typeof input.totalSize !== 'number'
+    || !Number.isSafeInteger(input.totalSize) || input.totalSize <= 0
+    || ('projectRoot' in input && typeof input.projectRoot !== 'string')
+    || ('gitRemote' in input && typeof input.gitRemote !== 'string')) {
     sendJson(res, 400, { message: '无效的 Session 同步请求' }); return
   }
+  const sessionId = input.sessionId
+  const contentMd5 = input.contentMd5
+  const totalSize = input.totalSize
   const header = input.header as SessionHeader
+  const projectRoot = 'projectRoot' in input && typeof input.projectRoot === 'string' && input.projectRoot !== '' ? input.projectRoot : undefined
+  const gitRemote = 'gitRemote' in input && typeof input.gitRemote === 'string' && input.gitRemote !== '' ? input.gitRemote : undefined
+  if (header.id !== sessionId) {
+    sendJson(res, 400, { ok: false, message: 'Session header id 与 sessionId 不一致' })
+    return
+  }
   if (header.version !== SESSION_FORMAT_VERSION) {
-    writeTeamLog({ level: 'warn', event: 'session.sync.version_mismatch', message: `Session format version mismatch got=${String(header.version)} expected=${SESSION_FORMAT_VERSION}`, sessionId: input.sessionId, userId })
+    writeTeamLog({ level: 'warn', event: 'session.sync.version_mismatch', message: `Session format version mismatch got=${String(header.version)} expected=${SESSION_FORMAT_VERSION}`, sessionId, userId })
     sendJson(res, 415, { ok: false, message: `会话格式版本不兼容（client=${String(header.version)}, server=${SESSION_FORMAT_VERSION}），请升级 Server` })
     return
   }
-  const result = await ctx.team.ensureSessionOwner(input.sessionId, userId)
+  const result = await ctx.team.ensureSessionOwner(sessionId, userId)
   if (result === 'conflict') { sendJson(res, 409, { message: '会话已属于其他用户' }); return }
   const delta = input as { baseSize?: unknown; baseMd5?: unknown }
   const baseSize = typeof delta.baseSize === 'number' ? delta.baseSize : undefined
   const baseMd5 = typeof delta.baseMd5 === 'string' ? delta.baseMd5 : undefined
+  if ((baseSize === undefined) !== (baseMd5 === undefined)) {
+    sendJson(res, 400, { ok: false, message: 'baseSize 与 baseMd5 必须同时提供' })
+    return
+  }
   const logBytes = Buffer.from(input.log, 'base64')
   if (logBytes.byteLength === 0) { sendJson(res, 400, { ok: false, message: '日志内容为空' }); return }
-  try {
-    const location = ctx.sessionPersistence.locate(header)
-    if (location === undefined) { sendJson(res, 500, { ok: false, message: '会话持久化不可用' }); return }
-    // 增量追加：要求 client 证明前缀与 server 已存一致（baseSize+baseMd5 匹配）。
-    if (baseSize !== undefined && baseMd5 !== undefined) {
-      const marker = await ctx.team.readSessionMarker(input.sessionId)
-      if (marker === undefined || marker.userId !== userId
-        || marker.contentMd5 !== baseMd5 || marker.fileSize !== baseSize) {
-        writeTeamLog({ level: 'warn', event: 'session.sync.base_mismatch', message: `Session delta base mismatch`, sessionId: input.sessionId, userId })
+  await sessionSyncQueue.run(sessionId, async () => {
+    try {
+      const location = ctx.sessionPersistence.locate(header)
+      if (location === undefined) { sendJson(res, 500, { ok: false, message: '会话持久化不可用' }); return }
+      let base: { size: number; md5: string } | undefined
+      if (baseSize !== undefined && baseMd5 !== undefined) {
+        const marker = await ctx.team.readSessionMarker(sessionId)
+        if (marker === undefined || marker.userId !== userId
+          || marker.contentMd5 !== baseMd5 || marker.fileSize !== baseSize) {
+          writeTeamLog({ level: 'warn', event: 'session.sync.base_mismatch', message: 'Session delta base mismatch', sessionId, userId })
+          sendJson(res, 409, { ok: false, reason: 'base-mismatch', message: '增量基准不匹配，请全量同步' })
+          return
+        }
+        base = { size: baseSize, md5: baseMd5 }
+      }
+      const candidate = await buildSessionCandidate(
+        location.path,
+        logBytes,
+        totalSize,
+        contentMd5,
+        base,
+      )
+      await publishValidatedSession(location.path, candidate, async () => {
+        await ctx.sessionPersistence.inspect(sessionId as SessionId)
+      })
+      await ctx.team.markSessionSynced(sessionId, contentMd5, totalSize)
+      try {
+        const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(5_000))
+        await ctx.team.saveSessionAnalytics({
+          sessionId,
+          ...(projectRoot === undefined ? {} : { projectName: basename(projectRoot) }),
+          ...(projectRoot === undefined ? {} : { projectRoot }),
+          ...(gitRemote === undefined ? {} : { gitRemote }),
+          title: projectRoot === undefined ? '新会话' : basename(projectRoot),
+          lastActiveAt: inspected.events.at(-1)?.time ?? inspected.meta.createdAt,
+          metrics: analyzeSessionEvents(inspected.events),
+        })
+      } catch (error) {
+        writeTeamLog({ level: 'warn', event: 'session.analytics.persist_failed', message: error instanceof Error ? error.message : String(error), sessionId, userId })
+      }
+      sendJson(res, 200, { ok: true, contentMd5 })
+    } catch (error) {
+      if (error instanceof SessionSyncBaseMismatchError) {
+        writeTeamLog({ level: 'warn', event: 'session.sync.base_mismatch', message: error.message, sessionId, userId })
         sendJson(res, 409, { ok: false, reason: 'base-mismatch', message: '增量基准不匹配，请全量同步' })
         return
       }
-      // 增量前：目标文件必须已存在（全量建立过）；文件缺失时增量会重建出无头文件。
-      const existing = await stat(location.path).catch(() => undefined)
-      if (existing === undefined) {
-        writeTeamLog({ level: 'warn', event: 'session.sync.file_missing', message: 'Session file missing for delta; full sync required', sessionId: input.sessionId, userId })
-        sendJson(res, 409, { ok: false, reason: 'base-mismatch', message: '会话文件不存在，请全量同步' })
+      if (error instanceof SessionSyncContentMismatchError) {
+        writeTeamLog({ level: 'warn', event: 'session.sync.content_mismatch', message: error.message, sessionId, userId })
+        sendJson(res, 400, { ok: false, reason: 'content-mismatch', message: '会话日志大小或摘要不匹配' })
         return
       }
-      await mkdir(dirname(location.path), { recursive: true })
-      const handle = await open(location.path, 'a')
-      try { await handle.write(logBytes) } finally { await handle.close() }
-      // 追加后校验：文件大小必须等于声明的 totalSize，否则增量有误，要求全量重建。
-      const after = await stat(location.path)
-      if (after.size !== input.totalSize) {
-        writeTeamLog({ level: 'warn', event: 'session.sync.size_mismatch', message: `Session delta size mismatch got=${after.size} expected=${input.totalSize}`, sessionId: input.sessionId, userId })
-        sendJson(res, 409, { ok: false, reason: 'base-mismatch', message: '增量追加结果与声明大小不符，请全量同步' })
+      if (error instanceof SessionSyncValidationError) {
+        writeTeamLog({ level: 'warn', event: 'session.sync.invalid_log', message: error.message, sessionId, userId })
+        sendJson(res, 400, { ok: false, reason: 'invalid-log', message: '会话日志格式无效，Server 已保留原文件' })
         return
       }
-    } else {
-      // 全量替换：原子写入（tmp + rename）。
-      await mkdir(dirname(location.path), { recursive: true })
-      const tmp = `${location.path}.sync-tmp`
-      await writeFile(tmp, logBytes)
-      await rename(tmp, location.path)
-      // 校验：日志首帧必须是合法会话头（防无头文件入库导致启动/列表崩溃）。
-      try {
-        await ctx.sessionPersistence.inspect(input.sessionId as SessionId)
-      } catch (validationError) {
-        await rm(location.path, { force: true })
-        // 清标记：拒绝后不留"有标记无文件"的分歧，下次同步重新全量上传。
-        await ctx.team.clearSessionMarker(input.sessionId)
-        writeTeamLog({ level: 'warn', event: 'session.sync.invalid_log', message: `Session log rejected: ${validationError instanceof Error ? validationError.message : String(validationError)} bytes=${logBytes.byteLength}`, sessionId: input.sessionId, userId })
-        sendJson(res, 400, { ok: false, reason: 'invalid-log', message: '会话日志首帧不是合法会话头，已拒绝' })
-        return
-      }
+      writeTeamLog({ level: 'error', event: 'session.sync.failed', message: error instanceof Error ? error.message : String(error), sessionId, userId })
+      sendJson(res, 500, { ok: false, message: '会话日志写入失败，Server 已保留原文件' })
     }
-    await ctx.team.markSessionSynced(input.sessionId, input.contentMd5, input.totalSize)
-    sendJson(res, 200, { ok: true, contentMd5: input.contentMd5 })
-  } catch (error) {
-    writeTeamLog({ level: 'error', event: 'session.sync.failed', message: error instanceof Error ? error.message : String(error), sessionId: input.sessionId, userId })
-    sendJson(res, 500, { ok: false, message: '会话日志写入失败' })
-  }
+  })
 }
 
 async function handleSyncSessionStatus(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -608,6 +672,8 @@ async function handleSyncSessionStatus(ctx: TeamContext, sessions: AuthSessions,
     has: true,
     ...(marker.contentMd5 === null ? {} : { contentMd5: marker.contentMd5 }),
     ...(marker.fileSize === null ? {} : { fileSize: marker.fileSize }),
+    ...(marker.projectRoot === undefined ? {} : { projectRoot: marker.projectRoot }),
+    ...(marker.gitRemote === undefined ? {} : { gitRemote: marker.gitRemote }),
   })
 }
 
