@@ -1,6 +1,6 @@
 # dsh-team-client
 
-员工侧插件（HiveMind 团队平台的一部分）。提供登录转发、凭证托管、会话/Git 同步与状态 UI。
+员工侧插件（HiveMind 团队 AI 协作与知识沉淀平台的一部分）。提供登录转发、凭证托管、会话/Git 同步与状态 UI。
 
 完整说明见 [../../README.md](../../README.md)（GitHub 首页）。
 
