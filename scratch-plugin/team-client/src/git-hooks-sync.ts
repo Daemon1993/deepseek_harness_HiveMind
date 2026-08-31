@@ -160,6 +160,16 @@ async function shortStat(root: string, commitHash: string): Promise<{ files: num
   }
 }
 
+async function commitMetadata(root: string, commitHash: string): Promise<{ subject?: string; time: number }> {
+  const output = await git(root, ['show', '-s', '--format=%s%x00%ct', commitHash])
+  const [subject, seconds] = output.split('\0')
+  const parsed = Number(seconds)
+  return {
+    ...(subject === undefined || subject === '' ? {} : { subject }),
+    time: Number.isFinite(parsed) ? parsed * 1000 : Date.now(),
+  }
+}
+
 async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<void> {
   const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
   if (!response.ok) throw new Error(`Git metadata upload failed: HTTP ${response.status}`)
@@ -172,16 +182,17 @@ async function changedCommits(repository: WatchedRepository, record: GitRecord):
 }
 
 async function uploadRecord(serverURL: string, headers: Record<string, string>, repository: WatchedRepository, record: GitRecord): Promise<void> {
-  const time = Date.now()
   const hashes = await changedCommits(repository, record)
+  const gitRemote = await optionalGit(repository.root, ['remote', 'get-url', 'origin'])
   const commits = await Promise.all(hashes.map(async commitHash => ({
     commitHash,
     cwd: repository.root,
+    ...(gitRemote === undefined ? {} : { gitRemote }),
+    ...await commitMetadata(repository.root, commitHash),
     ...await shortStat(repository.root, commitHash),
-    time,
   })))
   if (commits.length > 0) await postJson(`${serverURL}/team/api/git/changes`, headers, { commits })
-  await postJson(`${serverURL}/team/api/git/ops`, headers, { ops: [{ action: record.action, cwd: repository.root, time }] })
+  await postJson(`${serverURL}/team/api/git/ops`, headers, { ops: [{ action: record.action, cwd: repository.root, time: Date.now() }] })
 }
 
 function parseRecord(line: string): GitRecord | undefined {

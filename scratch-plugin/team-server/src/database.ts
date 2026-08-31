@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import type { TeamLogRecord, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
+import type { TeamCodeChange, TeamCodeChangeInput, TeamLogRecord, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
 import { readTeamConfig } from './config.ts'
 
 export type TeamAccount = TeamUser & { password: string }
@@ -118,15 +118,22 @@ export class TeamDatabase {
         user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
         session_id TEXT,
         cwd TEXT,
+        git_remote TEXT,
         commit_hash TEXT UNIQUE,
+        subject TEXT,
         files_changed INT,
         insertions INT,
         deletions INT,
+        commit_time BIGINT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
+    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS git_remote TEXT')
+    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS subject TEXT')
+    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS commit_time BIGINT')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_cwd_idx ON team_code_changes (cwd, created_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_user_idx ON team_code_changes (user_id, created_at DESC)')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_project_idx ON team_code_changes (git_remote, commit_time DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_occurred_at_idx ON team_audit_logs (occurred_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_user_id_idx ON team_audit_logs (user_id, occurred_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_session_id_idx ON team_audit_logs (session_id, occurred_at DESC)')
@@ -325,15 +332,71 @@ export class TeamDatabase {
   }
 
   /** Record one batch of code-change summaries; commit hash is the idempotency key. */
-  async recordCodeChanges(userId: string, sessionId: string | undefined, commits: readonly { commitHash: string; cwd?: string; files: number; insertions: number; deletions: number }[]): Promise<void> {
+  async recordCodeChanges(userId: string, sessionId: string | undefined, commits: readonly TeamCodeChangeInput[]): Promise<void> {
     for (const commit of commits) {
       await this.client().query(
-        `INSERT INTO team_code_changes (user_id, session_id, cwd, commit_hash, files_changed, insertions, deletions)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (commit_hash) DO NOTHING`,
-        [userId, sessionId ?? null, commit.cwd ?? null, commit.commitHash, commit.files, commit.insertions, commit.deletions],
+        `INSERT INTO team_code_changes (
+           user_id, session_id, cwd, git_remote, commit_hash, subject,
+           files_changed, insertions, deletions, commit_time
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (commit_hash) DO UPDATE SET
+           session_id = COALESCE(team_code_changes.session_id, EXCLUDED.session_id),
+           cwd = COALESCE(team_code_changes.cwd, EXCLUDED.cwd),
+           git_remote = COALESCE(team_code_changes.git_remote, EXCLUDED.git_remote),
+           subject = COALESCE(team_code_changes.subject, EXCLUDED.subject),
+           commit_time = COALESCE(team_code_changes.commit_time, EXCLUDED.commit_time)`,
+        [
+          userId,
+          sessionId ?? null,
+          commit.cwd ?? null,
+          commit.gitRemote ?? null,
+          commit.commitHash,
+          commit.subject ?? null,
+          commit.files,
+          commit.insertions,
+          commit.deletions,
+          commit.time ?? Date.now(),
+        ],
       )
     }
+  }
+
+  /** Read commit summaries in the requested time range, newest first. */
+  async listCodeChanges(since: number): Promise<TeamCodeChange[]> {
+    const result = await this.client().query<{
+      user_id: string
+      user_name: string
+      commit_hash: string
+      git_remote: string | null
+      subject: string | null
+      files_changed: number | null
+      insertions: number | null
+      deletions: number | null
+      commit_time: string | null
+      created_at: Date
+    }>(
+      `SELECT changes.user_id, users.name AS user_name, changes.commit_hash,
+              changes.git_remote, changes.subject, changes.files_changed,
+              changes.insertions, changes.deletions, changes.commit_time,
+              changes.created_at
+       FROM team_code_changes AS changes
+       JOIN team_users AS users ON users.id = changes.user_id
+       WHERE COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $1
+       ORDER BY COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) DESC`,
+      [since],
+    )
+    return result.rows.map(row => ({
+      userId: row.user_id,
+      userName: row.user_name,
+      commitHash: row.commit_hash,
+      ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }),
+      ...(row.subject === null ? {} : { subject: row.subject }),
+      files: row.files_changed ?? 0,
+      insertions: row.insertions ?? 0,
+      deletions: row.deletions ?? 0,
+      time: row.commit_time === null ? row.created_at.getTime() : Number(row.commit_time),
+    }))
   }
 
   private client(): Pool {

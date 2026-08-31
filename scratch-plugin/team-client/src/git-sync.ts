@@ -1,5 +1,4 @@
-// git-sync.ts —— 监听工具执行，提取 git 操作与代码变更元数据上传到 server。
-// 只传元数据（action/commitHash/stat），命令参数、commit message 不出机器。
+// git-sync.ts —— 监听工具执行，提取 Git 操作与提交摘要上传到 Server。
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
@@ -67,11 +66,27 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
       if (action === 'commit' && succeeded && cwd !== undefined) {
         const hash = (await run('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim()
         const stat = parseShortStat((await run('git', ['diff-tree', '-r', '--shortstat', 'HEAD'], { cwd })).stdout)
+        const subject = (await run('git', ['show', '-s', '--format=%s', 'HEAD'], { cwd })).stdout.trim()
+        let gitRemote: string | undefined
+        try {
+          gitRemote = (await run('git', ['remote', 'get-url', 'origin'], { cwd })).stdout.trim() || undefined
+        } catch {
+          // A local repository may not have an origin remote.
+        }
         await fetch(`${serverURL}/team/api/git/changes`, {
           method: 'POST', headers,
           body: JSON.stringify({
             sessionId,
-            commits: [{ commitHash: hash, cwd, files: stat.files, insertions: stat.insertions, deletions: stat.deletions, time }],
+            commits: [{
+              commitHash: hash,
+              cwd,
+              ...(gitRemote === undefined ? {} : { gitRemote }),
+              ...(subject === '' ? {} : { subject }),
+              files: stat.files,
+              insertions: stat.insertions,
+              deletions: stat.deletions,
+              time,
+            }],
           }),
         }).catch(() => undefined)
       }

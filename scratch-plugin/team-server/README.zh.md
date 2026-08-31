@@ -39,7 +39,7 @@ PostgreSQL 的 `BIGINT` Session 文件大小会在查询时转换为整数，再
 
 统计快照带有投影版本；Server 首次读取旧版快照时从 Session 副本重算一次，后续请求继续直接读取 SQL。
 
-发布完成后，Server 把不含内容的 Session 分析快照写入 PostgreSQL。Client 通过 Git 获取仓库根目录和可选的 `remote.origin.url`；普通工作区没有项目字段，也不会进入项目统计。快照包含项目名称、Git 字段、标题、活动时间、计数、耗时、工具聚合与模型用量，不包含工作区路径、消息、工具参数、命令输出或文件内容。总览、用户和项目页面直接聚合这些快照，不会重新打开每个 Session 文件。管理员首次查看缺少快照的历史 Session 时，Server 会补建快照；单个 Session 时间线仍按需读取原生 Session 工件及其工作区路径。
+发布完成后，Server 把不含内容的 Session 分析快照写入 PostgreSQL。Client 通过 Git 获取仓库根目录和可选的 `remote.origin.url`；普通工作区没有项目字段，也不会进入项目统计。快照包含项目名称、Git 字段、标题、活动时间、计数、耗时、工具聚合与模型用量，不包含工作区路径、消息、工具参数、命令输出或文件内容。Server 另行存储 commit hash、subject、origin remote、采集用户、时间和增删统计。总览、用户和项目页面按用户 ID 或 Git remote 分别聚合两类数据，不声称某条 commit 属于某个 Session。只有 Git 提交的项目仍会显示；没有 origin 的提交只进入用户统计。管理员首次查看缺少快照的历史 Session 时，Server 会补建快照；单个 Session 时间线仍按需读取原生 Session 工件及其工作区路径。
 
 通过 `./start-local.ps1` 启动本地 Server，默认监听 3081 端口。
 

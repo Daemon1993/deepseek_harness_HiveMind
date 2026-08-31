@@ -10,6 +10,7 @@ const run = promisify(execFile)
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   vi.resetModules()
   delete process.env.DSH_HOME
   await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
@@ -29,6 +30,7 @@ describe('command-line Git synchronization', () => {
     await run('git', ['init'], { cwd: repositoryRoot })
     await run('git', ['config', 'user.email', 'test@example.com'], { cwd: repositoryRoot })
     await run('git', ['config', 'user.name', 'Test'], { cwd: repositoryRoot })
+    await run('git', ['remote', 'add', 'origin', 'https://example.com/team/repository.git'], { cwd: repositoryRoot })
     const originalHook = join(originalHooks, 'post-commit')
     await writeFile(originalHook, `#!/bin/sh\nprintf ran > '${marker.replace(/\\/g, '/')}'\n`)
     await chmod(originalHook, 0o755)
@@ -37,8 +39,13 @@ describe('command-line Git synchronization', () => {
 
     const handlers = new Map<string, (req: Readable & { method?: string }, res: { writeHead(status: number): void; end(body: string): void }) => Promise<void> | void>()
     let disposeEffect: (() => Promise<void>) | undefined
+    const requests: { url: string; body: unknown }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      requests.push({ url, body: JSON.parse(String(init?.body)) as unknown })
+      return { ok: true }
+    }))
     const ctx = {
-      credentials: { resolve: async () => undefined },
+      credentials: { resolve: async () => ({ value: 'team-token' }) },
       webServer: { register: ({ path, handler }: { path: string; handler: typeof handlers extends Map<string, infer T> ? T : never }) => {
         handlers.set(path, handler)
         return () => undefined
@@ -60,7 +67,14 @@ describe('command-line Git synchronization', () => {
     await run('git', ['add', 'file.txt'], { cwd: repositoryRoot })
     await run('git', ['commit', '-m', 'test'], { cwd: repositoryRoot })
     expect(await readFile(marker, 'utf8')).toBe('ran')
-    expect(await readFile(join(dataRoot, 'team-client', 'git-events.queue'), 'utf8')).toContain('commit|')
+    await vi.waitFor(() => expect(requests.some(request => request.url.endsWith('/team/api/git/changes'))).toBe(true), { timeout: 5_000 })
+    const changes = requests.find(request => request.url.endsWith('/team/api/git/changes'))?.body as {
+      commits: { gitRemote?: string; subject?: string }[]
+    }
+    expect(changes.commits[0]).toMatchObject({
+      gitRemote: 'https://example.com/team/repository.git',
+      subject: 'test',
+    })
 
     const unwatch = Object.assign(Readable.from([JSON.stringify({ cwd: repositoryRoot })]), { method: 'POST' })
     await handlers.get('/team/git/unwatch')!(unwatch, { writeHead(value) { status = value }, end() {} })

@@ -25,8 +25,8 @@
 - ✅ SSO 免密进后台（30 秒一次性 ticket 桥接）
 - ✅ 模型网关（公司 token 换真 key、无缓冲流式转发）
 - ✅ Session 归档同步（字节增量 + md5 校验 + 全量回退 + 对账）
-- ✅ Git / 代码变更同步（监听工具执行，commit_hash 幂等）
-- ✅ 管理后台（账号/分析/洞察/归属/同步状态/对账）
+- ✅ Git / 代码变更同步（Harness 工具与显式 watch 的仓库，commit_hash 幂等）
+- ✅ 管理后台（总览、用户、项目、Session、账号与同步状态）
 - ✅ 同步状态 UI（右下角胶囊，≥2s 动画 + 手动同步）
 - 📋 代码分析面板（Step 2）
 
@@ -73,9 +73,9 @@
 ④ turn 结束（session/flush）
    → 触发同步：拉 server 标记 → md5 比对 → 增量/全量 → server 校验 → 落盘 + 更新标记
 ⑤ commit 代码
-   → tools/post-execute 检测 git → 上传操作 + diff stat（含 sessionId）
+   → Harness 工具或本地 Git Hook 检测提交 → 上传 remote、subject、采集用户、时间与 diff stat
 ⑥ 管理员看后台
-   → 使用分析/洞察/会话归属/同步状态（从 PG + 文件聚合）
+   → 按用户或 Git remote 并排查看 AI 使用、Git 提交与 Session，不推断提交归属
 ```
 
 ### 3.2 登录时序图
@@ -179,7 +179,7 @@ sequenceDiagram
 | | /team/api/git/ops · /git/changes | Bearer | Git / 变更上传 |
 | | /team/api/admin-ticket · /team/admin/consume | Bearer / — | SSO code 换发与消费 |
 | **Server Admin**（Cookie） | /team/login · /session · /logout · /apply | — | 管理员登录态/申请 |
-| | /team/admin · /users · /sessions · /analytics · /insights | admin | 后台页面与接口 |
+| | /team/admin · /users · /sessions · /overview | admin | 后台页面与聚合接口 |
 | | /team/admin/sync-status · /sync/reconcile | admin | 同步状态 · 对账 |
 
 ### 5.2 PG 表 · Redis key · 事件 · 环境变量
@@ -190,7 +190,7 @@ sequenceDiagram
 | | team_session_log | 归属+标记：session_id/user_id/content_md5/file_size |
 | | team_audit_logs | 审计：level/event/source/user/session/details JSONB |
 | | team_git_ops | Git 操作流水：action/cwd/failed/user/session |
-| | team_code_changes | 代码变更：commit_hash UNIQUE（幂等键） |
+| | team_code_changes | 代码变更：commit_hash UNIQUE（幂等键），含 remote、subject、采集用户、时间与增删统计 |
 | | team_session_owners | 旧归属表（遗留） |
 | **Redis** | team:session:* | 管理员 Cookie（7 天滑动） |
 | | team:client-token:* | 本地 DSH Bearer（7 天固定） |
@@ -244,7 +244,7 @@ sequenceDiagram
 监听 tools/post-execute → 检测 bash + git → commit 成功 → rev-parse + diff-tree --shortstat → 上传
 ```
 
-**细节**：水瀑必须 next()；只传元数据；commit_hash UNIQUE 幂等；sessionId 已关联。
+**细节**：水瀑必须调用 `next()`；只上传提交元数据；commit_hash UNIQUE 幂等；Harness 工具能够提供 `sessionId` 时可选保存，但分析不使用它归因。
 
 ---
 

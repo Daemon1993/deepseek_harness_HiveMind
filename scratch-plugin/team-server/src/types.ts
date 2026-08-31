@@ -110,10 +110,25 @@ export interface TeamGitOpInput {
 export interface TeamCodeChangeInput {
   commitHash: string
   cwd?: string
+  gitRemote?: string
+  subject?: string
   files: number
   insertions: number
   deletions: number
   time?: number
+}
+
+/** One persisted commit summary exposed to administrator analytics. */
+export interface TeamCodeChange {
+  userId: string
+  userName: string
+  commitHash: string
+  gitRemote?: string
+  subject?: string
+  files: number
+  insertions: number
+  deletions: number
+  time: number
 }
 
 /** Public operations provided by the team platform service. */
@@ -132,6 +147,7 @@ export interface TeamServiceApi {
   deleteSyncedSession(sessionId: string): Promise<boolean>
   recordGitOps(userId: string, sessionId: string | undefined, ops: readonly TeamGitOpInput[]): Promise<void>
   recordCodeChanges(userId: string, sessionId: string | undefined, commits: readonly TeamCodeChangeInput[]): Promise<void>
+  listCodeChanges(since: number): Promise<readonly TeamCodeChange[]>
   listOwnSessions(userId: string): Promise<readonly TeamSyncedSession[]>
   listSyncedSessions(): Promise<readonly TeamSyncedSessionDetail[]>
   listSyncStatus(): Promise<readonly TeamSessionSyncState[]>
