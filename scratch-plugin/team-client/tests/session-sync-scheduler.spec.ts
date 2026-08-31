@@ -72,4 +72,21 @@ describe('SessionSyncScheduler', () => {
     await scheduler.dispose()
     expect(order).toEqual(['a:start', 'b', 'a:end'])
   })
+
+  it('retries a failed synchronization until it succeeds', async () => {
+    vi.useFakeTimers()
+    const scheduler = new SessionSyncScheduler(500, 1_000)
+    const outcomes = [false, true]
+    const operation = vi.fn(async () => outcomes.shift())
+
+    scheduler.runNow('session-a', operation)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(operation).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(operation).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(operation).toHaveBeenCalledTimes(2)
+
+    await scheduler.dispose()
+  })
 })

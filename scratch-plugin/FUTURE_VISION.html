@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HiveMind · 未来愿景</title>
+<style>
+  :root{
+    --bg:#070b16;
+    --bg2:#0d1426;
+    --panel:rgba(255,255,255,.035);
+    --panel-line:rgba(255,255,255,.09);
+    --text:#e8ecf5;
+    --muted:#9aa4bd;
+    --cyan:#38e1d6;
+    --violet:#9b7bff;
+    --blue:#5b9cff;
+    --amber:#ffb454;
+    --green:#5ed68b;
+    --pink:#ff77a9;
+    --grad:linear-gradient(120deg,#38e1d6 0%,#5b9cff 45%,#9b7bff 100%);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    line-height:1.75;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+  /* nav */
+  nav{
+    position:sticky;top:0;z-index:50;
+    backdrop-filter:blur(14px);
+    background:rgba(7,11,22,.72);
+    border-bottom:1px solid var(--panel-line);
+  }
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;height:62px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.5px}
+  .brand .dot{width:22px;height:22px;border-radius:7px;background:var(--grad);box-shadow:0 0 18px rgba(91,156,255,.5)}
+  .links{display:flex;gap:26px;flex-wrap:wrap}
+  .links a{color:var(--muted);text-decoration:none;font-size:14px;transition:color .2s}
+  .links a:hover{color:var(--text)}
+  /* hero */
+  header.hero{
+    position:relative;
+    padding:96px 0 64px;
+    background:
+      radial-gradient(900px 460px at 18% 0%,rgba(91,156,255,.20),transparent 60%),
+      radial-gradient(760px 420px at 88% 8%,rgba(155,123,255,.18),transparent 60%),
+      radial-gradient(600px 360px at 50% 120%,rgba(56,225,214,.12),transparent 60%);
+    border-bottom:1px solid var(--panel-line);
+  }
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:13px;color:var(--cyan);letter-spacing:2px;
+    border:1px solid rgba(56,225,214,.3);border-radius:999px;
+    padding:6px 16px;margin-bottom:26px;background:rgba(56,225,214,.06);
+  }
+  .eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+  h1.title{font-size:clamp(44px,7vw,84px);font-weight:900;letter-spacing:-1.5px;line-height:1.04}
+  .title .g{background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lede{margin-top:24px;font-size:clamp(17px,2.2vw,21px);color:var(--muted);max-width:680px}
+  .lede b{color:var(--text);font-weight:600}
+  .hero-tags{display:flex;gap:10px;flex-wrap:wrap;margin-top:30px}
+  .tag{font-size:13px;color:var(--muted);border:1px solid var(--panel-line);border-radius:8px;padding:6px 12px;background:var(--panel)}
+  .tag b{color:var(--text)}
+  /* topo */
+  .topo{
+    margin-top:54px;background:var(--panel);border:1px solid var(--panel-line);
+    border-radius:20px;padding:34px;backdrop-filter:blur(8px);
+  }
+  .topo h3{font-size:14px;color:var(--muted);letter-spacing:1px;margin-bottom:6px;font-weight:600}
+  .topo .sub{font-size:13px;color:var(--muted);margin-bottom:22px}
+  /* sections */
+  section{padding:84px 0;border-bottom:1px solid var(--panel-line)}
+  .s-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .s-num{font-size:13px;color:var(--cyan);font-weight:700;letter-spacing:2px}
+  h2{font-size:clamp(26px,4vw,38px);font-weight:800;letter-spacing:-.5px}
+  .s-desc{color:var(--muted);max-width:760px;margin:14px 0 44px;font-size:16px}
+  /* question */
+  .qbox{
+    background:linear-gradient(135deg,rgba(91,156,255,.10),rgba(155,123,255,.06));
+    border:1px solid rgba(91,156,255,.22);border-radius:18px;padding:38px 40px;
+  }
+  .qbox .qq{font-size:clamp(22px,3vw,30px);font-weight:700;line-height:1.4}
+  .qbox .qq em{font-style:normal;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .answers{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:30px}
+  .answer{background:rgba(7,11,22,.5);border:1px solid var(--panel-line);border-radius:14px;padding:22px}
+  .answer .ic{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:20px;margin-bottom:14px}
+  .answer h4{font-size:16px;margin-bottom:6px}
+  .answer p{font-size:14px;color:var(--muted)}
+  /* principles */
+  .grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+  .pcard{background:var(--panel);border:1px solid var(--panel-line);border-radius:16px;padding:26px;transition:transform .25s,border-color .25s}
+  .pcard:hover{transform:translateY(-4px);border-color:rgba(91,156,255,.35)}
+  .pcard .ph{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  .pcard .pn{font-size:12px;color:var(--muted);font-weight:700}
+  .pcard h4{font-size:17px}
+  .pcard p{color:var(--muted);font-size:14.5px}
+  /* diff table */
+  .diff{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1px solid var(--panel-line);border-radius:16px;overflow:hidden}
+  .diff .col{padding:24px;border-right:1px solid var(--panel-line)}
+  .diff .col:last-child{border-right:0}
+  .diff .head{font-size:13px;color:var(--muted);letter-spacing:1px;font-weight:700;margin-bottom:12px}
+  .diff .name{font-size:18px;font-weight:700;margin-bottom:14px}
+  .diff .feat{display:flex;align-items:center;gap:8px;font-size:14px;padding:7px 0;border-top:1px dashed var(--panel-line)}
+  .diff .feat:first-of-type{border-top:0}
+  .yes{color:var(--green)}
+  .no{color:var(--pink);opacity:.7}
+  .diff .hl{background:linear-gradient(180deg,rgba(56,225,214,.06),rgba(91,156,255,.06))}
+  .diff .badge{display:inline-block;margin-top:8px;font-size:12px;color:var(--cyan);border:1px solid rgba(56,225,214,.3);border-radius:6px;padding:3px 9px}
+  /* future cards */
+  .dim-head{display:flex;align-items:center;gap:12px;margin:56px 0 26px}
+  .dim-head .line{flex:1;height:1px;background:var(--panel-line)}
+  .dim-head h3{font-size:20px;font-weight:700;white-space:nowrap}
+  .dim-head .ico{font-size:22px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .fcard{position:relative;background:var(--panel);border:1px solid var(--panel-line);border-radius:16px;padding:26px;overflow:hidden;transition:transform .25s,box-shadow .25s}
+  .fcard::before{content:"";position:absolute;inset:0;background:var(--grad);opacity:0;transition:opacity .3s;z-index:0}
+  .fcard:hover{transform:translateY(-5px);box-shadow:0 18px 50px rgba(91,156,255,.16)}
+  .fcard>*{position:relative;z-index:1}
+  .fcard .fi{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font-size:23px;margin-bottom:16px;background:rgba(91,156,255,.12);border:1px solid rgba(91,156,255,.25)}
+  .fcard h4{font-size:17px;margin-bottom:8px}
+  .fcard p{color:var(--muted);font-size:14px}
+  /* timeline */
+  .tl{position:relative;padding-left:34px}
+  .tl::before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:linear-gradient(180deg,var(--cyan),var(--blue),var(--violet),transparent)}
+  .tl .stage{position:relative;padding-bottom:48px}
+  .tl .stage:last-child{padding-bottom:0}
+  .tl .stage::before{content:"";position:absolute;left:-30px;top:4px;width:20px;height:20px;border-radius:50%;background:var(--bg);border:3px solid var(--blue);box-shadow:0 0 16px rgba(91,156,255,.5)}
+  .tl .stage.now::before{border-color:var(--cyan);box-shadow:0 0 16px rgba(56,225,214,.6)}
+  .tl .stage.fut::before{border-color:var(--violet);box-shadow:0 0 16px rgba(155,123,255,.6)}
+  .tl .phase{font-size:13px;color:var(--cyan);font-weight:700;letter-spacing:1.5px}
+  .tl .stage.fut .phase{color:var(--violet)}
+  .tl h4{font-size:19px;margin:6px 0 10px}
+  .tl p{color:var(--muted);max-width:680px;font-size:14.5px}
+  .tl .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .chip{font-size:12px;color:var(--muted);border:1px solid var(--panel-line);border-radius:6px;padding:4px 10px;background:rgba(7,11,22,.5)}
+  /* verdict */
+  .verdict{
+    margin-top:24px;background:linear-gradient(135deg,rgba(94,214,139,.10),rgba(56,225,214,.06));
+    border:1px solid rgba(94,214,139,.25);border-radius:18px;padding:38px 40px;
+  }
+  .verdict .vt{font-size:13px;color:var(--green);letter-spacing:2px;font-weight:700;margin-bottom:14px}
+  .verdict p{font-size:17px;line-height:1.8}
+  .verdict p b{color:var(--text)}
+  /* footer */
+  footer{padding:54px 0 70px;text-align:center;color:var(--muted);font-size:13px}
+  footer .gline{height:1px;max-width:120px;margin:0 auto 24px;background:var(--grad)}
+  @media(max-width:780px){
+    .answers,.grid4,.cards,.diff{grid-template-columns:1fr}
+    .diff .col{border-right:0;border-bottom:1px solid var(--panel-line)}
+    .links{display:none}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span>HiveMind</div>
+    <div class="links">
+      <a href="#question">本质</a>
+      <a href="#principle">取向</a>
+      <a href="#diff">差异化</a>
+      <a href="#future">未来能力</a>
+      <a href="#roadmap">演进路径</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow">FUTURE VISION · 未来愿景</span>
+    <h1 class="title">让一群本地 AI Agent，<br>变成可<span class="g">沉淀</span>的团队工作面</h1>
+    <p class="lede"><b>HiveMind</b> 是一个本地优先的团队 AI Agent 协作与知识沉淀平台。<br>
+    员工各自用自己的本地 DSH 干活，一台中心 Server 统一持有模型凭证、归档过程、治理访问——<b>不把 Agent 搬上云，也不牺牲本地能力与数据主权。</b></p>
+    <div class="hero-tags">
+      <span class="tag">N 本地 DSH · 1 Server DSH</span>
+      <span class="tag"><b>过程</b> + <b>产物</b> 绑定归档</span>
+      <span class="tag">凭证不出 Server</span>
+      <span class="tag">文件即真相</span>
+      <span class="tag">LLM 可直接读会话原生格式</span>
+    </div>
+
+    <div class="topo">
+      <h3>架构拓扑</h3>
+      <p class="sub">工具/工作区/Git 在本地执行；Server 只做认证、模型网关、会话归档——永不执行 Agent。</p>
+      <svg viewBox="0 0 1000 230" width="100%" height="230" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38e1d6"/><stop offset="1" stop-color="#5b9cff"/></linearGradient>
+          <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b9cff"/><stop offset="1" stop-color="#9b7bff"/></linearGradient>
+          <linearGradient id="g3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb454"/><stop offset="1" stop-color="#ff77a9"/></linearGradient>
+          <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#5b9cff"/></marker>
+          <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#38e1d6"/></marker>
+        </defs>
+        <!-- local nodes -->
+        <g font-family="PingFang SC,sans-serif">
+          <rect x="40" y="30" width="200" height="56" rx="14" fill="none" stroke="url(#g1)" stroke-width="1.5"/>
+          <text x="140" y="54" text-anchor="middle" fill="#e8ecf5" font-size="15" font-weight="700">本地 DSH · 员工 A</text>
+          <text x="140" y="74" text-anchor="middle" fill="#9aa4bd" font-size="11">工作区 · shell · git · 工具</text>
+          <rect x="40" y="100" width="200" height="56" rx="14" fill="none" stroke="url(#g1)" stroke-width="1.5"/>
+          <text x="140" y="124" text-anchor="middle" fill="#e8ecf5" font-size="15" font-weight="700">本地 DSH · 员工 B</text>
+          <text x="140" y="144" text-anchor="middle" fill="#9aa4bd" font-size="11">工作区 · shell · git · 工具</text>
+          <text x="140" y="180" text-anchor="middle" fill="#5ed68b" font-size="12">真密钥不在本机</text>
+        </g>
+        <!-- arrows to server: model + archive -->
+        <path d="M244 58 C 360 58, 420 80, 470 96" stroke="#5b9cff" stroke-width="1.8" fill="none" marker-end="url(#arr)"/>
+        <path d="M244 128 C 360 128, 420 110, 470 108" stroke="#38e1d6" stroke-width="1.8" fill="none" marker-end="url(#arr2)"/>
+        <text x="330" y="74" fill="#5b9cff" font-size="11" text-anchor="middle">模型请求（Bearer）</text>
+        <text x="330" y="126" fill="#38e1d6" font-size="11" text-anchor="middle">会话+Git 归档（单向）</text>
+        <!-- server -->
+        <g font-family="PingFang SC,sans-serif">
+          <rect x="470" y="58" width="220" height="92" rx="16" fill="rgba(91,156,255,.08)" stroke="url(#g2)" stroke-width="1.8"/>
+          <text x="580" y="86" text-anchor="middle" fill="#e8ecf5" font-size="16" font-weight="800">Server DSH</text>
+          <text x="580" y="106" text-anchor="middle" fill="#9aa4bd" font-size="11">认证 · 模型网关 · 归档</text>
+          <text x="580" y="126" text-anchor="middle" fill="#9aa4bd" font-size="11">对账 · 分析 · 管理台</text>
+          <text x="580" y="146" text-anchor="middle" fill="#ffb454" font-size="11">真 DEEPSEEK_API_KEY 在此</text>
+        </g>
+        <!-- arrow to deepseek -->
+        <path d="M694 104 C 780 104, 820 104, 870 104" stroke="#ffb454" stroke-width="1.8" fill="none" marker-end="url(#arr)"/>
+        <text x="782" y="96" fill="#ffb454" font-size="11" text-anchor="middle">凭证代换 · 流式转发</text>
+        <!-- deepseek -->
+        <g font-family="PingFang SC,sans-serif">
+          <rect x="874" y="76" width="90" height="56" rx="14" fill="none" stroke="url(#g3)" stroke-width="1.5"/>
+          <text x="919" y="100" text-anchor="middle" fill="#e8ecf5" font-size="13" font-weight="700">DeepSeek</text>
+          <text x="919" y="118" text-anchor="middle" fill="#9aa4bd" font-size="10">api.deepseek.com</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+</header>
+
+<section id="question">
+  <div class="wrap">
+    <div class="s-head"><span class="s-num">01</span><h2>它在回答什么问题</h2></div>
+    <p class="s-desc">当每个员工都开始用 AI Agent 干活——写代码、改文件、跑命令——企业怎么管？HiveMind 给的不是"搬上云"那个答案。</p>
+    <div class="qbox">
+      <p class="qq">怎么让一群本地 AI Agent，<em>认得出谁、只让看自己的、真密钥不出 Server</em>，<br>同时把过程沉淀成团队可复用的知识？</p>
+      <div class="answers">
+        <div class="answer">
+          <div class="ic" style="background:rgba(255,180,84,.12);border:1px solid rgba(255,180,84,.3)">🔑</div>
+          <h4>凭证集中</h4>
+          <p>真 DeepSeek key 只在中心 Server。模型请求经网关代换后流式转发，员工机器碰不到密钥。</p>
+        </div>
+        <div class="answer">
+          <div class="ic" style="background:rgba(94,214,139,.12);border:1px solid rgba(94,214,139,.3)">💻</div>
+          <h4>工作本地</h4>
+          <p>工具、shell、文件、Git 全在员工机器执行。Server 永不执行 Agent，不跑员工工具。</p>
+        </div>
+        <div class="answer">
+          <div class="ic" style="background:rgba(56,225,214,.12);border:1px solid rgba(56,225,214,.3)">📥</div>
+          <h4>过程归档</h4>
+          <p>每个会话的字节副本 + Git 活动单向流向 Server，沉淀成团队的"工作档案"。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="principle">
+  <div class="wrap">
+    <div class="s-head"><span class="s-num">02</span><h2>四个价值取向</h2></div>
+    <p class="s-desc">几版演进里始终一致的设计取向——这才是架构的骨架，不是功能清单。</p>
+    <div class="grid4">
+      <div class="pcard">
+        <div class="ph"><span class="pn">P1</span><h4>数据主权在本地</h4></div>
+        <p>会话原生文件先落员工机器，Server 只是副本。文件即真相，PG 是派生索引。靠"验证 + 幂等 + 可重建"，不追求强一致。</p>
+      </div>
+      <div class="pcard">
+        <div class="ph"><span class="pn">P2</span><h4>单向数据流</h4></div>
+        <p>只本地 → Server，不做双向。归档与分析不需要回灌，砍掉了同步冲突这一整层复杂度。</p>
+      </div>
+      <div class="pcard">
+        <div class="ph"><span class="pn">P3</span><h4>隔离靠约束不靠信任</h4></div>
+        <p>DB 归属约束 + 接口鉴权三层。跨用户操作在存储层被拒，不是靠客户端自觉。</p>
+      </div>
+      <div class="pcard">
+        <div class="ph"><span class="pn">P4</span><h4>可观测但隐私收敛</h4></div>
+        <p>用 gitRemote 取代本地路径、analytics 只存元数据。只沉淀安全的管理信号，不含消息/命令/文件内容。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="diff">
+  <div class="wrap">
+    <div class="s-head"><span class="s-num">03</span><h2>关键差异化</h2></div>
+    <p class="s-desc">LLM 知识沉淀最吃"过程 + 产物"绑定的数据。这是 HiveMind 的喂料口优势。</p>
+    <div class="diff">
+      <div class="col">
+        <div class="head">代码平台</div>
+        <div class="name">GitHub</div>
+        <div class="feat"><span class="no">✕</span> 有产物，无过程</div>
+        <div class="feat"><span class="yes">✓</span> commit / diff</div>
+        <div class="feat"><span class="no">✕</span> 看不到协作怎么发生</div>
+      </div>
+      <div class="col">
+        <div class="head">对话平台</div>
+        <div class="name">AI Chat</div>
+        <div class="feat"><span class="yes">✓</span> 有过程，无产物</div>
+        <div class="feat"><span class="yes">✓</span> prompt / 工具</div>
+        <div class="feat"><span class="no">✕</span> 不绑定代码改动</div>
+      </div>
+      <div class="col hl">
+        <div class="head">HiveMind</div>
+        <div class="name">过程 + 产物</div>
+        <div class="feat"><span class="yes">✓</span> session 全量过程</div>
+        <div class="feat"><span class="yes">✓</span> git 变更绑定</div>
+        <div class="feat"><span class="yes">✓</span> 谁在哪个仓库怎么协作的</div>
+        <div class="badge">LLM 可直接读原生会话格式</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="future">
+  <div class="wrap">
+    <div class="s-head"><span class="s-num">04</span><h2>未来能实现的效果</h2></div>
+    <p class="s-desc">底座把过程与产物归档到位后，上层接 LLM 分析即可沉淀——这正是为它准备的喂料口。</p>
+
+    <div class="dim-head"><span class="ico">🧑</span><h3>个人维度</h3><span class="line"></span></div>
+    <div class="cards">
+      <div class="fcard">
+        <div class="fi">📊</div>
+        <h4>个人工作画像</h4>
+        <p>聚合一个人所有 session + Git 活动：碰过哪些项目、什么工具链、典型工作流、反复踩的坑、成长曲线。过程数据越积越多，沉淀价值非线性增长。</p>
+      </div>
+      <div class="fcard">
+        <div class="fi">🔄</div>
+        <h4>AI 协作习惯复盘</h4>
+        <p>哪些 prompt 模式有效、哪些工具调用总失败、哪类任务烧 token 最多、低效在哪。让"怎么用 AI"本身变成可优化的技能。</p>
+      </div>
+      <div class="fcard">
+        <div class="fi">📚</div>
+        <h4>个人经验库</h4>
+        <p>把解决过的难题沉淀成"我是怎么用 AI 解这个的"，可检索、可复用。下次遇到同类问题，先查自己的经验而非从零开始。</p>
+      </div>
+    </div>
+
+    <div class="dim-head"><span class="ico">🗂️</span><h3>项目维度</h3><span class="line"></span></div>
+    <div class="cards">
+      <div class="fcard">
+        <div class="fi">🧠</div>
+        <h4>项目记忆</h4>
+        <p>按 gitRemote 聚合一个仓库下所有人的协作：仓库约定、架构决策是怎么在 session 里被讨论、落地成 commit 的。让项目有"自己的记忆"。</p>
+      </div>
+      <div class="fcard">
+        <div class="fi">🚀</div>
+        <h4>新人 Onboarding</h4>
+        <p>聚合历史 session 生成"这个项目踩过的坑、典型解法路径、约定在哪里"。新人遇到问题时先检索团队经验，而不是反复问人。</p>
+      </div>
+      <div class="fcard">
+        <div class="fi">🔗</div>
+        <h4>跨人经验流动</h4>
+        <p>A 解决过的同类问题，B 再遇到时能检索到 A 的协作过程——不只看最终 commit，而是看到"这条改动是怎么被想出来的"。</p>
+      </div>
+      <div class="fcard">
+        <div class="fi">📈</div>
+        <h4>改动质量洞察</h4>
+        <p>把 commit 的 stat 和背后的 AI 协作关联：哪类改动一次过、哪类总返工、哪类任务 token 效率低。团队级的质量与效率仪表。</p>
+      </div>
+      <div class="fcard">
+        <div class="fi">🔍</div>
+        <h4>过程回溯</h4>
+        <p>任意一次代码改动，能回放"它背后的 AI 对话、工具调用、决策路径"。代码审查不再只看 diff，而看懂来龙去脉。</p>
+      </div>
+      <div class="fcard">
+        <div class="fi">🎯</div>
+        <h4>团队画像</h4>
+        <p>谁擅长哪类任务、哪个模块的知识集中在谁身上、团队的能力分布与协作网络。组织级洞察，不只是个人。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="roadmap">
+  <div class="wrap">
+    <div class="s-head"><span class="s-num">05</span><h2>演进路径</h2></div>
+    <p class="s-desc">分阶段建设——底座是喂料投资，不是白修。上层落地的那一刻，归档的数据开始产出价值。</p>
+    <div class="tl">
+      <div class="stage now">
+        <div class="phase">阶段 01 · 当前已建</div>
+        <h4>底座层：通道 + 治理 + 可观测</h4>
+        <p>认证隔离、模型网关、会话字节归档、Git 元数据、对账、管理台基础分析。这条链路已打通并经过事务化与重试打磨。</p>
+        <div class="chips">
+          <span class="chip">凭证不出 Server</span>
+          <span class="chip">三层隔离</span>
+          <span class="chip">MD5 字节增量同步</span>
+          <span class="chip">事务化发布</span>
+          <span class="chip">失败自愈重试</span>
+          <span class="chip">对账兜底</span>
+        </div>
+      </div>
+      <div class="stage fut">
+        <div class="phase">阶段 02 · 未来接通</div>
+        <h4>知识层：LLM 分析沉淀</h4>
+        <p>在已有底座上接 LLM 分析 agent，读取 session 原生格式 + Git 变更，产出个人画像、项目记忆、经验检索。会话副本是 DSH 原生格式，LLM 直接可读，无需另起一套。</p>
+        <div class="chips">
+          <span class="chip">个人工作画像</span>
+          <span class="chip">项目记忆</span>
+          <span class="chip">跨人经验检索</span>
+          <span class="chip">改动质量洞察</span>
+          <span class="chip">过程回放</span>
+        </div>
+      </div>
+      <div class="stage fut">
+        <div class="phase">接通的关键两步</div>
+        <h4>从"归档"到"沉淀"只差两个字段</h4>
+        <p>① 把现在只存的代码变更 <b>stat</b> 升级为可取 <b>diff 内容</b>（git-sync 现刻意只传元数据）。<br>② 把 <b>会话内容检索面</b> 暴露给分析 agent。这两步一通，LLM 沉淀直接落在已有底座上。</p>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <div class="vt">结论</div>
+      <p>底座是<b>为上层喂料准备的</b>，不是过度工程。纯 GitHub 只有产物没过程，纯对话平台只有过程没产物——<b>HiveMind 把两者绑定</b>，这正是 LLM 知识沉淀天然落点。对个人、对项目，过程数据越积越多，沉淀价值非线性增长。<b>这不是"先修好管道等水来"，而是管道本就为水而修。</b></p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="gline"></div>
+  HiveMind · 本地优先的团队 AI Agent 协作与知识沉淀平台 · 未来愿景解读
+</footer>
+
+</body>
+</html>
