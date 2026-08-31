@@ -1,6 +1,6 @@
 # dsh-team-server
 
-服务器侧插件（HiveMind 团队平台的一部分）。负责认证、模型网关、会话归档、Git 记录与管理后台。
+服务器侧插件（HiveMind 团队 AI 协作与知识沉淀平台的一部分）。负责认证、模型网关、会话归档、Git 记录与管理后台。
 
 完整说明见 [../../README.md](../../README.md)（GitHub 首页）。
 

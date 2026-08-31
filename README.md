@@ -1,4 +1,4 @@
-# HiveMind · DSH 团队平台
+# HiveMind · 团队 AI 协作与知识沉淀平台
 
 > 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) **插件系统**构建的团队 AI 平台。
 
