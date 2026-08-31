@@ -6,6 +6,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { registerSessionSync } from './sync.ts'
 import { registerGitSync } from './git-sync.ts'
+import { registerGitHooksSync } from './git-hooks-sync.ts'
 
 /** Host face required for DSH package discovery and lifecycle ownership. */
 export const name = 'team-client'
@@ -219,4 +220,6 @@ export function apply(ctx: Context): void {
   registerSessionSync(ctx, serverURL)
   // Git 操作/代码变更同步：监听工具执行，提取元数据上传。
   registerGitSync(ctx, serverURL)
+  // 命令行外 git 操作监听：core.hooksPath + 事件队列 + 轮询消费，复用同一上报端点。
+  registerGitHooksSync(ctx, serverURL)
 }

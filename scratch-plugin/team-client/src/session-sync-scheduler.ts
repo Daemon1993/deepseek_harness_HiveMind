@@ -1,6 +1,6 @@
 type SessionSyncState = {
   dirty: boolean
-  operation: () => Promise<void>
+  operation: () => Promise<boolean | void>
   running: Promise<void> | undefined
   timer: ReturnType<typeof setTimeout> | undefined
 }
@@ -13,14 +13,17 @@ export class SessionSyncScheduler {
   /**
    * @param delayMs - quiet period before a scheduled synchronization starts.
    */
-  constructor(private readonly delayMs: number) {}
+  constructor(
+    private readonly delayMs: number,
+    private readonly retryDelayMs = 10_000,
+  ) {}
 
   /**
    * Schedule the latest operation for one Session after the quiet period.
    * @param sessionId - Session whose flushes share one timer and run.
    * @param operation - synchronization that reads the latest durable file.
    */
-  schedule(sessionId: string, operation: () => Promise<void>): void {
+  schedule(sessionId: string, operation: () => Promise<boolean | void>): void {
     if (this.disposed) return
     const state = this.ensure(sessionId, operation)
     state.operation = operation
@@ -40,7 +43,7 @@ export class SessionSyncScheduler {
    * @param sessionId - Session whose pending timer is consumed.
    * @param operation - synchronization that reads the latest durable file.
    */
-  runNow(sessionId: string, operation: () => Promise<void>): void {
+  runNow(sessionId: string, operation: () => Promise<boolean | void>): void {
     if (this.disposed) return
     const state = this.ensure(sessionId, operation)
     state.operation = operation
@@ -67,7 +70,7 @@ export class SessionSyncScheduler {
     this.states.clear()
   }
 
-  private ensure(sessionId: string, operation: () => Promise<void>): SessionSyncState {
+  private ensure(sessionId: string, operation: () => Promise<boolean | void>): SessionSyncState {
     let state = this.states.get(sessionId)
     if (state === undefined) {
       state = { dirty: false, operation, running: undefined, timer: undefined }
@@ -77,17 +80,32 @@ export class SessionSyncScheduler {
   }
 
   private start(sessionId: string, state: SessionSyncState): void {
-    const running = this.drain(state).finally(() => {
+    let retry = false
+    const running = this.drain(state).then((completed) => {
+      retry = !completed
+    }, () => {
+      retry = true
+    }).finally(() => {
       if (state.running === running) state.running = undefined
-      if (state.timer === undefined && !state.dirty) this.states.delete(sessionId)
+      if (this.disposed || state.running !== undefined || state.timer !== undefined || state.dirty) return
+      if (!retry) {
+        this.states.delete(sessionId)
+        return
+      }
+      state.timer = setTimeout(() => {
+        state.timer = undefined
+        this.start(sessionId, state)
+      }, this.retryDelayMs)
     })
     state.running = running
   }
 
-  private async drain(state: SessionSyncState): Promise<void> {
+  private async drain(state: SessionSyncState): Promise<boolean> {
+    let completed = true
     do {
       state.dirty = false
-      await state.operation()
+      completed = (await state.operation()) !== false
     } while (!this.disposed && state.dirty)
+    return completed
   }
 }
