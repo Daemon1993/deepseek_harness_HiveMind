@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from 'node:path'
 import type {} from "@deepseek-ai/dsh-host-webserver";
 import { SESSION_FORMAT_VERSION, type SessionHeader, type SessionId } from '@deepseek-ai/dsh-session'
-import type { TeamContext } from "./types.ts";
+import type { TeamCodeChangeInput, TeamContext } from "./types.ts";
 import { AuthSessions } from "./auth.ts";
 import { writeTeamLog } from "./team-log.ts";
 import { analyzeSessionEvents, sessionTitle } from './session-metrics.ts'
@@ -285,7 +285,17 @@ async function handleAdminSessions(ctx: TeamContext, sessions: AuthSessions, req
   sendJson(res, 200, { sessions: sessionRows })
 }
 
-async function listEnrichedSessionOwners(ctx: TeamContext) {
+type EnrichedSessionOwner = Omit<Awaited<ReturnType<TeamContext['team']['listSyncedSessions']>>[number], 'updatedAt'> & {
+  lastActiveAt: string
+  title?: string
+  projectName?: string
+  projectRoot?: string
+  gitRemote?: string
+  updatedAt: string | number
+  blank?: boolean
+}
+
+async function listEnrichedSessionOwners(ctx: TeamContext): Promise<EnrichedSessionOwner[]> {
   const owners = await ctx.team.listSyncedSessions()
   const analytics = new Map((await ctx.team.listSessionAnalytics()).map(snapshot => [snapshot.sessionId, snapshot]))
   await Promise.all(owners.map(async (owner) => {
@@ -316,7 +326,7 @@ async function listEnrichedSessionOwners(ctx: TeamContext) {
     }
   }))
   return owners.map((owner) => {
-    const base = { ...owner, lastActiveAt: owner.updatedAt }
+    const base: EnrichedSessionOwner = { ...owner, lastActiveAt: owner.updatedAt }
     const snapshot = analytics.get(owner.sessionId)
     if (snapshot === undefined) return base
     return {
@@ -331,76 +341,6 @@ async function listEnrichedSessionOwners(ctx: TeamContext) {
   })
 }
 
-async function handleAdminAnalytics(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
-  if (!await requireAdmin(ctx, sessions, req, res)) return
-  const requestedDays = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('days') ?? '7')
-  if (![1, 7, 30].includes(requestedDays)) { sendJson(res, 400, { message: '统计范围只支持 1、7 或 30 天' }); return }
-  const [allUsers, allSessions] = await Promise.all([
-    Promise.resolve(ctx.team.listAdminUsers()),
-    listEnrichedSessionOwners(ctx),
-  ])
-  const threshold = Date.now() - requestedDays * 24 * 60 * 60 * 1000
-  const activeAt = (session: typeof allSessions[number]): number => {
-    const updated = session.updatedAt
-    return typeof updated === 'number' ? updated : Date.parse(session.lastActiveAt)
-  }
-  const rangedSessions = allSessions.filter(session => activeAt(session) >= threshold)
-  const activeUserIds = new Set(rangedSessions.map(session => session.userId))
-  const directoryPaths = new Set(allSessions.flatMap(session => session.gitRemote === undefined ? [] : [session.gitRemote]))
-  const users = allUsers.map(user => {
-    const owned = allSessions.filter(session => session.userId === user.id)
-    const ranged = owned.filter(session => activeAt(session) >= threshold)
-    const activeTimes = owned.map(activeAt)
-    return {
-      userId: user.id,
-      userName: user.name,
-      ...(user.email === undefined ? {} : { email: user.email }),
-      status: user.status,
-      role: user.role,
-      sessionCount: owned.length,
-      recentSessionCount: ranged.length,
-      directoryCount: new Set(owned.flatMap(session => session.gitRemote === undefined ? [] : [session.gitRemote])).size,
-      firstUsedAt: owned.length === 0 ? undefined : new Date(Math.min(...owned.map(session => Date.parse(session.createdAt)))).toISOString(),
-      lastUsedAt: activeTimes.length === 0 ? undefined : new Date(Math.max(...activeTimes)).toISOString(),
-    }
-  }).sort((left, right) => right.recentSessionCount - left.recentSessionCount || right.sessionCount - left.sessionCount)
-  const directories = [...allSessions.reduce<Map<string, { path: string; name: string; sessionIds: Set<string>; userIds: Set<string>; lastActiveAt: number }>>((groups, session) => {
-    if (session.gitRemote === undefined) return groups
-    const group = groups.get(session.gitRemote) ?? { path: session.gitRemote, name: session.projectName ?? session.gitRemote, sessionIds: new Set(), userIds: new Set(), lastActiveAt: 0 }
-    group.sessionIds.add(session.sessionId)
-    group.userIds.add(session.userId)
-    group.lastActiveAt = Math.max(group.lastActiveAt, activeAt(session))
-    groups.set(session.gitRemote, group)
-    return groups
-  }, new Map()).values()].map(group => ({
-    path: group.path,
-    name: group.name,
-    sessionCount: group.sessionIds.size,
-    userCount: group.userIds.size,
-    lastActiveAt: new Date(group.lastActiveAt).toISOString(),
-  })).sort((left, right) => right.sessionCount - left.sessionCount)
-  const recentSessions = [...allSessions].sort((left, right) => activeAt(right) - activeAt(left)).slice(0, 10).map(session => ({
-    ...session,
-    lastActiveAt: new Date(activeAt(session)).toISOString(),
-  }))
-  sendJson(res, 200, {
-    rangeDays: requestedDays,
-    generatedAt: new Date().toISOString(),
-    summary: {
-      totalUsers: allUsers.length,
-      activeAccounts: allUsers.filter(user => user.status === 'active').length,
-      totalSessions: allSessions.length,
-      recentSessions: rangedSessions.length,
-      activeUsers: activeUserIds.size,
-      directoryCount: directoryPaths.size,
-    },
-    users,
-    directories,
-    recentSessions,
-  })
-}
-
 function requestedDays(req: IncomingMessage): 1 | 7 | 30 | undefined {
   const days = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('days') ?? '7')
   return days === 1 || days === 7 || days === 30 ? days : undefined
@@ -411,70 +351,75 @@ async function inspectOwnedSessions(ctx: TeamContext, owners: Awaited<ReturnType
   return owners.map(owner => ({ owner, metrics: analytics.get(owner.sessionId) ?? analyzeSessionEvents([]) }))
 }
 
-async function handleAdminInsights(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
-  if (!await requireAdmin(ctx, sessions, req, res)) return
-  const days = requestedDays(req)
-  if (days === undefined) { sendJson(res, 400, { message: '统计范围只支持 1、7 或 30 天' }); return }
-  const owners = await listEnrichedSessionOwners(ctx)
-  const inspected = await inspectOwnedSessions(ctx, owners)
-  const threshold = Date.now() - days * 24 * 60 * 60 * 1000
-  const tools = new Map<string, { name: string; calls: number; failures: number; userIds: Set<string>; directories: Set<string> }>()
-  const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }>()
-  const users = new Map<string, { userId: string; userName: string; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number }>()
-  const trends = new Map<string, { date: string; activeUsers: Set<string>; newSessions: number; toolCalls: number; modelRequests: number }>()
-  const rangeOwners = owners.filter(owner => Date.parse(owner.createdAt) >= threshold)
-  for (const owner of rangeOwners) {
-    const date = owner.createdAt.slice(0, 10)
-    const trend = trends.get(date) ?? { date, activeUsers: new Set(), newSessions: 0, toolCalls: 0, modelRequests: 0 }
-    trend.newSessions += 1; trends.set(date, trend)
+type AggregateModel = { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }
+type AggregateTool = { name: string; calls: number; failures: number }
+type AggregateCommit = Awaited<ReturnType<TeamContext['team']['listCodeChanges']>>[number]
+
+type UserAggregate = {
+  userId: string
+  userName: string
+  sessions: number
+  projects: Set<string>
+  messages: number
+  toolCalls: number
+  toolFailures: number
+  modelRequests: number
+  totalTokens: number
+  durationMs: number
+  errors: number
+  lastActiveAt: number
+  models: Map<string, AggregateModel>
+  tools: Map<string, AggregateTool>
+  commits: AggregateCommit[]
+  insertions: number
+  deletions: number
+  lastCommitAt: number
+}
+
+type ProjectAggregate = {
+  id: string
+  name: string
+  gitRemote: string
+  sessions: number
+  users: Map<string, string>
+  messages: number
+  toolCalls: number
+  toolFailures: number
+  modelRequests: number
+  totalTokens: number
+  durationMs: number
+  errors: number
+  lastActiveAt: number
+  models: Map<string, AggregateModel>
+  tools: Map<string, AggregateTool>
+  commits: AggregateCommit[]
+  insertions: number
+  deletions: number
+  lastCommitAt: number
+}
+
+function addModels(target: Map<string, AggregateModel>, models: readonly AggregateModel[]): void {
+  for (const model of models) {
+    const row = target.get(model.model) ?? { model: model.model, requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    row.requests += model.requests
+    row.inputTokens += model.inputTokens
+    row.outputTokens += model.outputTokens
+    row.totalTokens += model.totalTokens
+    target.set(model.model, row)
   }
-  for (const { owner, metrics } of inspected) {
-    const user = users.get(owner.userId) ?? { userId: owner.userId, userName: owner.userName, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0 }
-    for (const item of metrics.timeline) {
-      if (item.time < threshold) continue
-      const date = new Date(item.time).toISOString().slice(0, 10)
-      const trend = trends.get(date) ?? { date, activeUsers: new Set(), newSessions: 0, toolCalls: 0, modelRequests: 0 }
-      trend.activeUsers.add(owner.userId)
-      if (item.kind === 'tool') trend.toolCalls += 1
-      if (item.kind === 'model') trend.modelRequests += 1
-      trends.set(date, trend)
-    }
-    const inRange = (time: number): boolean => time >= threshold
-    const visibleTools = metrics.toolEvents.filter(item => inRange(item.time)).length
-    const visibleFailures = metrics.toolEvents.filter(item => inRange(item.time) && item.failed).length
-    user.toolCalls += visibleTools; user.toolFailures += visibleFailures
-    for (const model of metrics.modelEvents.filter(item => inRange(item.time))) {
-      const aggregate = models.get(model.model) ?? { ...model, requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 }
-      aggregate.requests += 1; aggregate.inputTokens += model.inputTokens; aggregate.outputTokens += model.outputTokens; aggregate.totalTokens += model.totalTokens
-      models.set(model.model, aggregate)
-      user.modelRequests += 1; user.totalTokens += model.totalTokens
-    }
-    users.set(owner.userId, user)
+}
+
+function addTools(target: Map<string, AggregateTool>, tools: readonly AggregateTool[]): void {
+  for (const tool of tools) {
+    const row = target.get(tool.name) ?? { name: tool.name, calls: 0, failures: 0 }
+    row.calls += tool.calls
+    row.failures += tool.failures
+    target.set(tool.name, row)
   }
-  // Tool rows need session-level source context, so accumulate them in a second pass.
-  for (const { owner, metrics } of inspected) for (const metric of metrics.toolEvents.filter(item => item.time >= threshold)) {
-    const row = tools.get(metric.name) ?? { name: metric.name, calls: 0, failures: 0, userIds: new Set(), directories: new Set() }
-    row.calls += 1; row.failures += metric.failed ? 1 : 0; row.userIds.add(owner.userId)
-    if (owner.gitRemote !== undefined) row.directories.add(owner.gitRemote)
-    tools.set(metric.name, row)
-  }
-  sendJson(res, 200, {
-    rangeDays: days,
-    generatedAt: new Date().toISOString(),
-    summary: {
-      toolCalls: [...tools.values()].reduce((total, tool) => total + tool.calls, 0),
-      toolFailures: [...tools.values()].reduce((total, tool) => total + tool.failures, 0),
-      modelRequests: [...models.values()].reduce((total, model) => total + model.requests, 0),
-      inputTokens: [...models.values()].reduce((total, model) => total + model.inputTokens, 0),
-      outputTokens: [...models.values()].reduce((total, model) => total + model.outputTokens, 0),
-      totalTokens: [...models.values()].reduce((total, model) => total + model.totalTokens, 0),
-    },
-    tools: [...tools.values()].map(({ userIds, directories, ...tool }) => ({ ...tool, userCount: userIds.size, projectCount: directories.size })).sort((left, right) => right.calls - left.calls),
-    models: [...models.values()].sort((left, right) => right.requests - left.requests),
-    users: [...users.values()].sort((left, right) => right.totalTokens - left.totalTokens),
-    trends: [...trends.values()].map(({ activeUsers, ...trend }) => ({ ...trend, activeUsers: activeUsers.size })).sort((left, right) => left.date.localeCompare(right.date)),
-  })
+}
+
+function projectName(gitRemote: string): string {
+  return gitRemote.replace(/[/\\]$/, '').split(/[/\\:]/).at(-1)?.replace(/\.git$/, '') || gitRemote
 }
 
 async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -483,11 +428,14 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
   const days = requestedDays(req)
   if (days === undefined) { sendJson(res, 400, { message: '统计范围只支持 1、7 或 30 天' }); return }
   const owners = await listEnrichedSessionOwners(ctx)
-  const inspected = await inspectOwnedSessions(ctx, owners)
   const threshold = Date.now() - days * 24 * 60 * 60 * 1000
+  const [inspected, codeChanges] = await Promise.all([
+    inspectOwnedSessions(ctx, owners),
+    ctx.team.listCodeChanges(threshold),
+  ])
 
-  const users = new Map<string, { userId: string; userName: string; sessions: number; projects: Set<string>; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }>()
-  const directories = new Map<string, { id: string; name: string; gitRemote: string; sessions: number; users: Map<string, string>; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number }>()
+  const users = new Map<string, UserAggregate>()
+  const directories = new Map<string, ProjectAggregate>()
   const tools = new Map<string, { name: string; calls: number; failures: number; users: Set<string> }>()
   const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }>()
   const trends = new Map<string, { date: string; sessions: number; activeUsers: Set<string>; toolCalls: number; modelRequests: number; totalTokens: number }>()
@@ -507,23 +455,37 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
     totalTokens += metrics.models.reduce((s, m) => s + m.totalTokens, 0)
     totalActiveMs += metrics.activeDurationMs; totalDurationMs += metrics.durationMs; totalErrors += metrics.errorCount
 
-    const user = users.get(owner.userId) ?? { userId: owner.userId, userName: owner.userName, sessions: 0, projects: new Set(), messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0 }
+    const user = users.get(owner.userId) ?? {
+      userId: owner.userId, userName: owner.userName, sessions: 0, projects: new Set(),
+      messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0,
+      durationMs: 0, errors: 0, lastActiveAt: 0, models: new Map(), tools: new Map(),
+      commits: [] as AggregateCommit[], insertions: 0, deletions: 0, lastCommitAt: 0,
+    }
     user.sessions++; user.toolCalls += metrics.toolCalls; user.toolFailures += metrics.toolFailures
     user.messages += metrics.userMessages + metrics.assistantMessages; user.errors += metrics.errorCount
     user.modelRequests += metrics.models.reduce((s, m) => s + m.requests, 0)
     user.totalTokens += metrics.models.reduce((s, m) => s + m.totalTokens, 0)
     user.durationMs += metrics.activeDurationMs; user.lastActiveAt = Math.max(user.lastActiveAt, metrics.lastTime)
     if (owner.gitRemote !== undefined) user.projects.add(owner.gitRemote)
+    addModels(user.models, metrics.models)
+    addTools(user.tools, metrics.tools)
     users.set(owner.userId, user)
 
     if (owner.gitRemote !== undefined) {
       const projectId = owner.gitRemote
-      const dir = directories.get(projectId) ?? { id: projectId, name: owner.projectName ?? owner.gitRemote, gitRemote: owner.gitRemote, sessions: 0, users: new Map(), messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0 }
+      const dir = directories.get(projectId) ?? {
+        id: projectId, name: owner.projectName ?? projectName(owner.gitRemote), gitRemote: owner.gitRemote,
+        sessions: 0, users: new Map(), messages: 0, toolCalls: 0, toolFailures: 0,
+        modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0,
+        models: new Map(), tools: new Map(), commits: [] as AggregateCommit[], insertions: 0, deletions: 0, lastCommitAt: 0,
+      }
       dir.sessions++; dir.users.set(owner.userId, owner.userName)
       dir.messages += metrics.userMessages + metrics.assistantMessages; dir.toolCalls += metrics.toolCalls; dir.toolFailures += metrics.toolFailures
       dir.modelRequests += metrics.models.reduce((s, m) => s + m.requests, 0)
       dir.totalTokens += metrics.models.reduce((s, m) => s + m.totalTokens, 0)
       dir.durationMs += metrics.activeDurationMs; dir.errors += metrics.errorCount; dir.lastActiveAt = Math.max(dir.lastActiveAt, metrics.lastTime)
+      addModels(dir.models, metrics.models)
+      addTools(dir.tools, metrics.tools)
       directories.set(projectId, dir)
     }
 
@@ -532,11 +494,7 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
       row.calls += tool.calls; row.failures += tool.failures; row.users.add(owner.userId)
       tools.set(tool.name, row)
     }
-    for (const model of metrics.models) {
-      const row = models.get(model.model) ?? { ...model }
-      row.requests += model.requests; row.inputTokens += model.inputTokens; row.outputTokens += model.outputTokens; row.totalTokens += model.totalTokens
-      models.set(model.model, row)
-    }
+    addModels(models, metrics.models)
 
     const date = new Date(metrics.lastTime).toISOString().slice(0, 10)
     const trend = trends.get(date) ?? { date, sessions: 0, activeUsers: new Set(), toolCalls: 0, modelRequests: 0, totalTokens: 0 }
@@ -551,6 +509,35 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
       models: metrics.models.map(({ model, requests }) => ({ model, requests })),
       lastActiveAt: metrics.lastTime, toolCalls: metrics.toolCalls, durationMs: metrics.activeDurationMs, errorCount: metrics.errorCount,
     })
+  }
+
+  for (const commit of codeChanges) {
+    const user = users.get(commit.userId) ?? {
+      userId: commit.userId, userName: commit.userName, sessions: 0, projects: new Set(),
+      messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0,
+      durationMs: 0, errors: 0, lastActiveAt: 0, models: new Map(), tools: new Map(),
+      commits: [] as AggregateCommit[], insertions: 0, deletions: 0, lastCommitAt: 0,
+    }
+    user.commits.push(commit)
+    user.insertions += commit.insertions
+    user.deletions += commit.deletions
+    user.lastCommitAt = Math.max(user.lastCommitAt, commit.time)
+    if (commit.gitRemote !== undefined) user.projects.add(commit.gitRemote)
+    users.set(commit.userId, user)
+
+    if (commit.gitRemote === undefined) continue
+    const directory = directories.get(commit.gitRemote) ?? {
+      id: commit.gitRemote, name: projectName(commit.gitRemote), gitRemote: commit.gitRemote,
+      sessions: 0, users: new Map(), messages: 0, toolCalls: 0, toolFailures: 0,
+      modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0,
+      models: new Map(), tools: new Map(), commits: [] as AggregateCommit[], insertions: 0, deletions: 0, lastCommitAt: 0,
+    }
+    directory.users.set(commit.userId, commit.userName)
+    directory.commits.push(commit)
+    directory.insertions += commit.insertions
+    directory.deletions += commit.deletions
+    directory.lastCommitAt = Math.max(directory.lastCommitAt, commit.time)
+    directories.set(commit.gitRemote, directory)
   }
 
   recentSessions.sort((a, b) => b.lastActiveAt - a.lastActiveAt)
@@ -569,10 +556,26 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
       modelRequests: totalModelRequests,
       inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens,
       activeDurationMs: totalActiveMs, durationMs: totalDurationMs, errors: totalErrors,
+      commits: codeChanges.length,
+      insertions: codeChanges.reduce((sum, commit) => sum + commit.insertions, 0),
+      deletions: codeChanges.reduce((sum, commit) => sum + commit.deletions, 0),
     },
     trends: [...trends.values()].map(({ activeUsers, ...t }) => ({ ...t, activeUsers: activeUsers.size })).sort((a, b) => a.date.localeCompare(b.date)),
-    users: [...users.values()].map(({ projects, ...user }) => ({ ...user, projects: projects.size })).sort((a, b) => b.totalTokens - a.totalTokens),
-    directories: [...directories.values()].map(({ users: members, ...directory }) => ({ ...directory, users: members.size, members: [...members].map(([userId, userName]) => ({ userId, userName })) })).sort((a, b) => b.sessions - a.sessions),
+    users: [...users.values()].map(({ projects, models: userModels, tools: userTools, ...user }) => ({
+      ...user,
+      projects: projects.size,
+      lastActiveAt: Math.max(user.lastActiveAt, user.lastCommitAt),
+      models: [...userModels.values()].sort((left, right) => right.totalTokens - left.totalTokens),
+      tools: [...userTools.values()].sort((left, right) => right.calls - left.calls),
+    })).sort((a, b) => b.totalTokens - a.totalTokens || b.commits.length - a.commits.length),
+    directories: [...directories.values()].map(({ users: members, models: projectModels, tools: projectTools, ...directory }) => ({
+      ...directory,
+      users: members.size,
+      lastActiveAt: Math.max(directory.lastActiveAt, directory.lastCommitAt),
+      members: [...members].map(([userId, userName]) => ({ userId, userName })),
+      models: [...projectModels.values()].sort((left, right) => right.totalTokens - left.totalTokens),
+      tools: [...projectTools.values()].sort((left, right) => right.calls - left.calls),
+    })).sort((a, b) => b.sessions - a.sessions || b.commits.length - a.commits.length),
     tools: [...tools.values()].map(({ users: u, ...t }) => ({ ...t, users: u.size })).sort((a, b) => b.calls - a.calls),
     models: [...models.values()].sort((a, b) => b.requests - a.requests),
     recentSessions,
@@ -766,11 +769,16 @@ async function handleGitChanges(ctx: TeamContext, sessions: AuthSessions, req: I
     || !('commits' in input) || !Array.isArray(input.commits) || input.commits.length === 0
     || !input.commits.every(c => typeof c === 'object' && c !== null
       && typeof c.commitHash === 'string' && c.commitHash !== ''
-      && typeof c.files === 'number' && typeof c.insertions === 'number' && typeof c.deletions === 'number')) {
+      && (!('gitRemote' in c) || typeof c.gitRemote === 'string')
+      && (!('subject' in c) || typeof c.subject === 'string')
+      && (!('time' in c) || typeof c.time === 'number' && Number.isFinite(c.time) && c.time >= 0)
+      && typeof c.files === 'number' && Number.isInteger(c.files) && c.files >= 0
+      && typeof c.insertions === 'number' && Number.isInteger(c.insertions) && c.insertions >= 0
+      && typeof c.deletions === 'number' && Number.isInteger(c.deletions) && c.deletions >= 0)) {
     sendJson(res, 400, { message: '无效的代码变更记录' }); return
   }
   const sessionId = typeof (input as { sessionId?: unknown }).sessionId === 'string' ? (input as { sessionId?: unknown }).sessionId as string : undefined
-  await ctx.team.recordCodeChanges(userId, sessionId, input.commits as { commitHash: string; cwd?: string; files: number; insertions: number; deletions: number }[])
+  await ctx.team.recordCodeChanges(userId, sessionId, input.commits as TeamCodeChangeInput[])
   sendJson(res, 200, { ok: true })
 }
 
@@ -824,7 +832,8 @@ async function handleAdminSyncStatus(ctx: TeamContext, sessions: AuthSessions, r
       sessions: [],
       lastSyncAt: undefined,
     }
-    user.sessions.push({ sessionId: row.sessionId, updatedAt: row.updatedAt, ...(titles.get(row.sessionId) === undefined ? {} : { title: titles.get(row.sessionId) }) })
+    const title = titles.get(row.sessionId)
+    user.sessions.push({ sessionId: row.sessionId, updatedAt: row.updatedAt, ...(title === undefined ? {} : { title }) })
     user.lastSyncAt = user.lastSyncAt === undefined || row.updatedAt > user.lastSyncAt ? row.updatedAt : user.lastSyncAt
     users.set(row.userId, user)
   }
@@ -1114,8 +1123,6 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sessions', handler: (req, res) => handleAdminSessions(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync-status', handler: (req, res) => handleAdminSyncStatus(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync/reconcile', handler: (req, res) => handleAdminSyncReconcile(ctx, sessions, req, res) }),
-  ctx.webServer.register({ kind: 'exact', path: '/team/admin/analytics', handler: (req, res) => handleAdminAnalytics(ctx, sessions, req, res) }),
-  ctx.webServer.register({ kind: 'exact', path: '/team/admin/insights', handler: (req, res) => handleAdminInsights(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/overview', handler: (req, res) => handleAdminOverview(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/insights/sessions', handler: (req, res) => handleAdminSessionTimeline(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/users', handler: (req, res) => handleAdminUser(ctx, sessions, req, res) }),

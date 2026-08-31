@@ -89,6 +89,10 @@ export class TeamService extends Service implements TeamServiceApi {
     return this.database.recordCodeChanges(userId, sessionId, commits)
   }
 
+  async listCodeChanges(since: number) {
+    return this.database.listCodeChanges(since)
+  }
+
   async listOwnSessions(userId: string): Promise<readonly TeamSyncedSession[]> {
     return this.database.listOwnSessions(userId)
   }
