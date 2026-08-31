@@ -21,6 +21,7 @@
     }
   },
   "scripts": {
+    "dsh": "node --import tsx/esm ../../apps/cli/src/bin.ts",
     "build:host": "tsdown --config tsdown.host.config.ts",
     "build:web": "tsdown --config tsdown.admin.config.ts && tsdown --config tsdown.login.config.ts",
     "build": "pnpm run build:host && pnpm run build:web",
