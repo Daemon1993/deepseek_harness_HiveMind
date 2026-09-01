@@ -24,10 +24,16 @@ function gitLog(level: 'info' | 'warn', message: string): void {
   else console.info(line)
 }
 
+const COMMIT_HASH = /^[0-9a-f]{40}$/iu
+/** `git log --not` 一次带上的 tip 上限，避免 Windows 命令行过长。 */
+const MAX_EXCLUDE_TIPS = 200
+
 interface WatchedRepository {
   root: string
-  /** 上次全量扫描的最新提交 hash：下次扫描只取它之后的增量。 */
+  /** 上次同步时 `rev-list -n 1 --all` 的 tip，兼容只存单 hash 的旧 watched.json。 */
   lastSyncedHash?: string
+  /** 上次同步时 heads/remotes 的 tip 集合；增量扫描排除这些 commit 的祖先。 */
+  syncedTips?: string[]
 }
 
 /** 一次扫描的结果：时间、抽取条数、错误。 */
@@ -129,9 +135,52 @@ interface ScannedCommit {
   time: number
 }
 
-/** 扫描仓库提交：有游标时只取游标之后（`git log --all --not <cursor>`），否则全量。 */
-async function scanCommits(root: string, cursor: string | undefined): Promise<ScannedCommit[]> {
-  const range = cursor === undefined ? ['--all'] : ['--all', '--not', cursor]
+function isCommitHash(value: string): boolean {
+  return COMMIT_HASH.test(value)
+}
+
+function excludeTipsOf(repository: WatchedRepository): string[] {
+  const tips = repository.syncedTips?.filter(isCommitHash) ?? []
+  if (tips.length > 0) return [...new Set(tips)].slice(0, MAX_EXCLUDE_TIPS)
+  return repository.lastSyncedHash !== undefined && isCommitHash(repository.lastSyncedHash)
+    ? [repository.lastSyncedHash]
+    : []
+}
+
+function gitErrorText(error: unknown): string {
+  if (error !== null && typeof error === 'object' && 'stderr' in error) {
+    const stderr = (error as { stderr: unknown }).stderr
+    const message = error instanceof Error ? error.message : ''
+    return `${message}\n${typeof stderr === 'string' || Buffer.isBuffer(stderr) ? String(stderr) : ''}`
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** 仅在游标对象已从仓库消失时回退全量；其它 git 失败保留游标。 */
+function isUnknownRevision(error: unknown): boolean {
+  return /bad object|unknown revision|invalid object name|ambiguous argument/iu.test(gitErrorText(error))
+}
+
+async function listTips(root: string): Promise<string[]> {
+  try {
+    const output = await git(root, ['for-each-ref', '--format=%(objectname)', 'refs/heads', 'refs/remotes'])
+    return [...new Set(output.split(/\r?\n/u).filter(isCommitHash))].slice(0, MAX_EXCLUDE_TIPS)
+  } catch {
+    // 无 refs 或命令失败：没有新 tip，调用方保留已有游标。
+    return []
+  }
+}
+
+async function persistCursor(repository: WatchedRepository): Promise<void> {
+  const tips = await listTips(repository.root)
+  if (tips.length > 0) repository.syncedTips = tips
+  const newest = await optionalGit(repository.root, ['rev-list', '-n', '1', '--all'])
+  if (newest !== undefined && isCommitHash(newest)) repository.lastSyncedHash = newest
+}
+
+/** 扫描仓库提交：有 tip 游标时 `git log --all --not <tips>`，否则全量。 */
+async function scanCommits(root: string, excludeTips: readonly string[]): Promise<ScannedCommit[]> {
+  const range = excludeTips.length === 0 ? ['--all'] : ['--all', ...excludeTips.flatMap(hash => ['--not', hash])]
   const [metadata, nameStatus, shortStat] = await Promise.all([
     gitScan(root, ['log', ...range, '--format=%H%x00%an%x00%ae%x00%B%x00%ct']),
     gitScan(root, ['log', ...range, '--format=%H', '--name-status', '--no-renames']),
@@ -169,9 +218,16 @@ async function loadWatched(): Promise<Map<string, WatchedRepository>> {
       if (typeof item !== 'object' || item === null) continue
       const record = item as Record<string, unknown>
       if (typeof record.root !== 'string' || record.root === '') continue
+      const lastSyncedHash = typeof record.lastSyncedHash === 'string' && isCommitHash(record.lastSyncedHash)
+        ? record.lastSyncedHash
+        : undefined
+      const syncedTips = Array.isArray(record.syncedTips)
+        ? [...new Set(record.syncedTips.filter((hash): hash is string => typeof hash === 'string' && isCommitHash(hash)))]
+        : undefined
       result.set(record.root, {
         root: record.root,
-        ...(typeof record.lastSyncedHash === 'string' ? { lastSyncedHash: record.lastSyncedHash } : {}),
+        ...(lastSyncedHash === undefined ? {} : { lastSyncedHash }),
+        ...(syncedTips === undefined || syncedTips.length === 0 ? {} : { syncedTips }),
       })
     }
     return result
@@ -197,16 +253,28 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
 /** 抽取一个仓库的全部/增量提交并批量上报；成功更新扫描游标并持久化。 */
 async function backfillRepository(serverURL: string, headers: Record<string, string>, repository: WatchedRepository, state: ScanState, save: () => Promise<void>): Promise<void> {
   const gitRemote = await optionalGit(repository.root, ['remote', 'get-url', 'origin'])
+  let excludeTips = excludeTipsOf(repository)
   let commits: ScannedCommit[]
   try {
-    commits = await scanCommits(repository.root, repository.lastSyncedHash)
-  } catch {
-    // 游标 hash 已失效（仓库被重新克隆/重写）时回退全量扫描。
+    commits = await scanCommits(repository.root, excludeTips)
+  } catch (error) {
+    if (excludeTips.length === 0 || !isUnknownRevision(error)) throw error
+    gitLog('warn', `cursor missing in repo, full scan root=${repository.root}`)
     delete repository.lastSyncedHash
-    commits = await scanCommits(repository.root, undefined)
+    delete repository.syncedTips
+    excludeTips = []
+    commits = await scanCommits(repository.root, [])
   }
-  if (commits.length === 0) return
-  gitLog('info', `scan ${commits.length} commit(s) root=${repository.root} range=${repository.lastSyncedHash === undefined ? 'full' : 'incremental'}`)
+  const range = excludeTips.length === 0 ? 'full' : 'incremental'
+  if (commits.length === 0) {
+    await persistCursor(repository)
+    state.lastScanAt = Date.now()
+    state.lastScanCommits = 0
+    delete state.lastError
+    await save()
+    return
+  }
+  gitLog('info', `scan ${commits.length} commit(s) root=${repository.root} range=${range}`)
   try {
     for (let offset = 0; offset < commits.length; offset += UPLOAD_BATCH_SIZE) {
       const batch = commits.slice(offset, offset + UPLOAD_BATCH_SIZE).map(commit => ({
@@ -225,8 +293,7 @@ async function backfillRepository(serverURL: string, headers: Record<string, str
       }))
       await postJson(`${serverURL}/team/api/git/changes`, headers, { commits: batch })
     }
-    // 全部批次成功后推进游标：下次只扫最新提交之后的新增。
-    repository.lastSyncedHash = commits[0]!.commitHash
+    await persistCursor(repository)
     state.lastScanAt = Date.now()
     state.lastScanCommits = commits.length
     delete state.lastError
@@ -294,9 +361,12 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
     }
   }
 
+  let loaded = Promise.resolve()
+
   const routes = [
     ctx.webServer.register({ kind: 'exact', path: '/team/git/import', async handler(req, res) {
       if (req.method !== 'POST') { json(res, 405, { message: '只支持 POST 请求' }); return }
+      await loaded
       const body = await readJsonBody(req)
       const cwd = typeof body?.cwd === 'string' ? body.cwd : ''
       const root = cwd === '' ? undefined : await optionalGit(cwd, ['rev-parse', '--show-toplevel'])
@@ -315,6 +385,7 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
     } }),
     ctx.webServer.register({ kind: 'exact', path: '/team/git/remove', async handler(req, res) {
       if (req.method !== 'POST') { json(res, 405, { message: '只支持 POST 请求' }); return }
+      await loaded
       const body = await readJsonBody(req)
       const cwd = typeof body?.cwd === 'string' ? body.cwd : ''
       const root = cwd === '' ? undefined : await optionalGit(cwd, ['rev-parse', '--show-toplevel'])
@@ -340,20 +411,19 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
         ...(lastError === undefined ? {} : { lastError }),
         repos: [...watched.values()].map(repository => ({
           root: repository.root,
-          hasCursor: repository.lastSyncedHash !== undefined,
+          hasCursor: repository.lastSyncedHash !== undefined || (repository.syncedTips?.length ?? 0) > 0,
           ...(() => { const state = scanStates.get(repository.root); return state === undefined ? {} : { lastScanAt: state.lastScanAt, lastScanCommits: state.lastScanCommits, ...(state.lastError === undefined ? {} : { lastError: state.lastError }) } })(),
         })),
       })
     } }),
   ]
 
-  const start = async (): Promise<void> => {
+  loaded = (async () => {
     await mkdir(dir, { recursive: true })
     watched = await loadWatched()
-    // 启动即补传全部已导入仓库的历史提交（有游标的仓库只扫增量）。
+    // 启动即扫描已导入仓库：有 tip 游标则只传增量，不会整仓再传。
     void backfillAll()
-  }
-  void start()
+  })()
   // 周期增量扫描：按 TEAM_GIT_SCAN_MINUTES 轮询 git log，补齐新提交。
   const scanTimer = setInterval(() => { void backfillAll() }, scanIntervalMs)
   ctx.effect(() => async () => {

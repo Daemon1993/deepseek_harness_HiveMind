@@ -12,7 +12,7 @@
 - 守卫：`/team/session` 恢复登录态；未登录用户跳转到登录页。
 - 模型网关：patch 在 `cordis.patch.yml` 中替换 `llm-deepseek` 的 `baseURL` 和 `apiKeyEnv`。
 - Session 同步：通过全局生命周期订阅接收浏览器 Agent 的 `session/flush`、创建和释放事件，不订阅高频 `session/event`。连续 flush 会重置同一 Session 的三秒空闲期；同步期间的新触发会在完成后补传最新状态，Session 释放则立即同步。网络错误、HTTP 408/429/5xx 或凭证暂不可用时保留待同步状态并每十秒重试；其他 4xx 停止自动重试，凭证更新或手动同步会重新检查。增量上传的 `409 base-mismatch` 和 `400 content-mismatch` 会立即回退到全量上传。启动只 flush 一次，再把文件同步任务交给调度器。上传采用 `src/sync.ts` 中的 MD5 字节增量和稳定读取校验。
-- Git 同步（`src/git-sync.ts`）：导入项目（`POST /team/git/import`，传入目录路径）后运行 `git log`，按每批 100 条上传作者、subject、完整 message、变更文件路径和增删统计。启动时以及每隔 `TEAM_GIT_SCAN_MINUTES`（默认 5）会重新扫描全部已导入仓库，只上传上次同步 hash 之后的提交（游标写在 `watched.json`；Server 按 `(git_remote, commit_hash)` 去重）。`POST /team/git/remove` 取消导入。`GET /team/git/status` 报告扫描进度。不安装 Hook，也不监听工具事件：唯一数据源是 `git log`。
+- Git 同步（`src/git-sync.ts`）：导入项目（`POST /team/git/import`，传入目录路径）后运行 `git log`，按每批 100 条上传作者、subject、完整 message、变更文件路径和增删统计。启动时以及每隔 `TEAM_GIT_SCAN_MINUTES`（默认 5）会重新扫描全部已导入仓库，只上传相对上次已同步分支/远端 tip 的新提交（`watched.json` 的 `syncedTips`；重启后仍走增量；Server 按 `(git_remote, commit_hash)` 去重）。`POST /team/git/remove` 取消导入。`GET /team/git/status` 报告扫描进度。不安装 Hook，也不监听工具事件：唯一数据源是 `git log`。
 - UI：通过 `sidebar.footer.action` Client Slot 提供账号状态以及 Session/Git 同步胶囊。
 - 手动同步：横幅操作调用 `/team/sync/now`，立即执行一次启动同步流程。
 - 同步诊断：`/team/sync/status` 返回最近 flush、同步尝试、成功和错误的时间及 Session ID。

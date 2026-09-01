@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -89,6 +89,28 @@ describe('project import Git synchronization', () => {
     await new Promise(resolve => setTimeout(resolve, 500))
     expect(requests.filter(request => request.url.endsWith('/team/api/git/changes'))).toHaveLength(0)
 
+    const watchedFile = join(dataRoot, 'team-client', 'watched.json')
+    await vi.waitFor(async () => {
+      const disk = JSON.parse(await readFile(watchedFile, 'utf8')) as { syncedTips?: string[] }[]
+      expect(disk[0]?.syncedTips?.length).toBeGreaterThan(0)
+    }, { timeout: 5_000 })
+
     await disposeEffect?.()
-  }, 20_000)
+    vi.resetModules()
+    requests.length = 0
+    handlers.clear()
+    const { registerGitSync: registerAgain } = await import('../src/git-sync.ts')
+    registerAgain(ctx as never, 'http://127.0.0.1:1')
+    await vi.waitFor(() => expect(handlers.has('/team/git/status')).toBe(true))
+    await vi.waitFor(async () => {
+      const statusRequest = Object.assign(Readable.from([]), { method: 'GET' })
+      let statusBody = ''
+      await handlers.get('/team/git/status')!(statusRequest, { writeHead() {}, end(body) { statusBody = body } })
+      const parsed = JSON.parse(statusBody) as { repos: { lastScanAt?: number }[] }
+      expect(parsed.repos[0]?.lastScanAt ?? 0).toBeGreaterThan(0)
+    }, { timeout: 5_000 })
+    expect(requests.filter(request => request.url.endsWith('/team/api/git/changes'))).toHaveLength(0)
+
+    await disposeEffect?.()
+  }, 30_000)
 })
