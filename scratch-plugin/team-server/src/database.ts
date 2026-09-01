@@ -35,6 +35,11 @@ export class TeamDatabase {
 
   async connect(): Promise<void> {
     this.pool = new Pool({ connectionString: await readTeamConfig('DB_URL') })
+    // 开发阶段：不做增量迁移，启动即按最新结构重建全部 team_* 表（含清理旧表残留）。
+    // 需要保留数据时删除本段，保留下方 CREATE TABLE IF NOT EXISTS。
+    await this.pool.query(`DROP TABLE IF EXISTS
+      team_model_usage, team_git_emails, team_audit_logs, team_git_ops,
+      team_code_changes, team_session_analytics, team_session_log, team_users`)
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_users (
         id TEXT PRIMARY KEY,
@@ -60,9 +65,9 @@ export class TeamDatabase {
         details JSONB NOT NULL DEFAULT '{}'::jsonb
       )
     `)
-    await this.pool.query("ALTER TABLE team_audit_logs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'unknown'")
-    // 旧归属表（/api/session/create 路径）已废弃：统一到 team_session_log，清理残留。
-    await this.pool.query('DROP TABLE IF EXISTS team_session_owners')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_occurred_at_idx ON team_audit_logs (occurred_at DESC)')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_user_id_idx ON team_audit_logs (user_id, occurred_at DESC)')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_session_id_idx ON team_audit_logs (session_id, occurred_at DESC)')
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_session_log (
         session_id TEXT PRIMARY KEY,
@@ -73,9 +78,6 @@ export class TeamDatabase {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
-    await this.pool.query('ALTER TABLE team_session_log ADD COLUMN IF NOT EXISTS content_md5 TEXT')
-    await this.pool.query('ALTER TABLE team_session_log ADD COLUMN IF NOT EXISTS file_size BIGINT')
-    await this.pool.query('ALTER TABLE team_session_log DROP COLUMN IF EXISTS next_seq')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_session_log_user_id_idx ON team_session_log (user_id, updated_at DESC)')
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_session_analytics (
@@ -89,16 +91,7 @@ export class TeamDatabase {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
-    await this.pool.query('ALTER TABLE team_session_analytics ADD COLUMN IF NOT EXISTS project_root TEXT')
-    await this.pool.query('ALTER TABLE team_session_analytics ADD COLUMN IF NOT EXISTS git_remote TEXT')
-    await this.pool.query('ALTER TABLE team_session_analytics ADD COLUMN IF NOT EXISTS project_name TEXT')
-    await this.pool.query('ALTER TABLE team_session_analytics DROP COLUMN IF EXISTS cwd')
-    await this.pool.query('DROP INDEX IF EXISTS team_session_analytics_cwd_idx')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_session_analytics_project_idx ON team_session_analytics (git_remote, project_root, last_active_at DESC)')
-    // 旧的事件行存储废弃：事件本体改为 server 自己的 DSH 原生会话文件，
-    // 这里只保留归属；client 重启后会全量补传，旧数据不需要迁移。
-    await this.pool.query('DROP TABLE IF EXISTS team_session_events')
-    await this.pool.query('DROP TABLE IF EXISTS team_sessions')
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_git_ops (
         id BIGSERIAL PRIMARY KEY,
@@ -109,7 +102,6 @@ export class TeamDatabase {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
-    await this.pool.query('ALTER TABLE team_git_ops DROP COLUMN IF EXISTS session_id')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_git_ops_user_idx ON team_git_ops (user_id, created_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_git_ops_cwd_idx ON team_git_ops (cwd, created_at DESC)')
     await this.pool.query(`
@@ -131,27 +123,11 @@ export class TeamDatabase {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
-    // Commit 主键迁移：全局唯一 hash → (git_remote, commit_hash) 复合唯一；空 remote 归一为 ''。
-    await this.pool.query('UPDATE team_code_changes SET git_remote = \'\' WHERE git_remote IS NULL')
-    await this.pool.query('ALTER TABLE team_code_changes ALTER COLUMN git_remote SET DEFAULT \'\'')
-    await this.pool.query('ALTER TABLE team_code_changes ALTER COLUMN git_remote SET NOT NULL')
-    await this.pool.query('ALTER TABLE team_code_changes DROP CONSTRAINT IF EXISTS team_code_changes_commit_hash_key')
-    await this.pool.query('DROP INDEX IF EXISTS team_code_changes_commit_hash_key')
     await this.pool.query('CREATE UNIQUE INDEX IF NOT EXISTS team_code_changes_project_hash_idx ON team_code_changes (git_remote, commit_hash)')
-    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS author_name TEXT')
-    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS author_email TEXT')
-    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS message TEXT')
-    await this.pool.query("ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS changed_files JSONB NOT NULL DEFAULT '[]'::jsonb")
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_author_idx ON team_code_changes (author_email, commit_time DESC)')
-    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS git_remote TEXT')
-    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS subject TEXT')
-    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS commit_time BIGINT')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_cwd_idx ON team_code_changes (cwd, created_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_user_idx ON team_code_changes (user_id, created_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_project_idx ON team_code_changes (git_remote, commit_time DESC)')
-    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_occurred_at_idx ON team_audit_logs (occurred_at DESC)')
-    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_user_id_idx ON team_audit_logs (user_id, occurred_at DESC)')
-    await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_session_id_idx ON team_audit_logs (session_id, occurred_at DESC)')
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_model_usage (
         request_id TEXT PRIMARY KEY,
