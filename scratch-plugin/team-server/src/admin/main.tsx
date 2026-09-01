@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Alert, App as AntApp, Avatar, Button, Card, Col, Collapse, ConfigProvider, Drawer, Empty, Input, Layout, Menu, Popconfirm, Row, Segmented, Select, Space, Statistic, Table, Tag, Typography, message } from 'antd'
+import { Alert, App as AntApp, Avatar, Button, Card, Col, Collapse, ConfigProvider, Drawer, Empty, Input, Layout, Menu, Popconfirm, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 type Role = 'admin' | 'developer' | 'reviewer' | 'user'
@@ -8,7 +8,7 @@ type Status = 'pending' | 'active' | 'rejected' | 'disabled'
 type User = { id: string; email?: string; name: string; status: Status; role: Role; password?: string }
 type SessionOwner = { sessionId: string; userId: string; userName: string; email?: string; createdAt: string; lastActiveAt: string; title?: string; projectName?: string; gitRemote?: string; updatedAt?: number; blank?: boolean }
 type Phase = 'checking' | 'ready'
-type Section = 'dashboard' | 'usage' | 'users' | 'projects' | 'sessions' | 'accounts' | 'sync'
+type Section = 'dashboard' | 'users' | 'projects' | 'accounts'
 
 // ── 总览类型（/team/admin/overview）──────────────────────────
 type OverviewSummary = {
@@ -207,7 +207,7 @@ function AdminRoot() {
     } catch { window.location.replace('/team/login-page') }
   }
   useEffect(() => { void checkSession() }, [])
-  useEffect(() => { if (section === 'sessions' && canEdit) void loadSessions() }, [section, canEdit])
+  useEffect(() => { if (section === 'dashboard' && canEdit) void loadSessions() }, [section, canEdit])
 
   const logout = async (): Promise<void> => { await fetch('/team/logout', { method: 'POST' }); window.location.replace('/team/login-page') }
   const save = async (id: string, patch: Partial<User> = {}): Promise<void> => {
@@ -238,21 +238,19 @@ function AdminRoot() {
 
   if (phase === 'checking') return <Centered><Card loading title="团队平台管理后台" /></Centered>
   const sectionCopy = section === 'dashboard'
-    ? { title: '总览', description: '团队 AI 使用情况的统一视图：会话、成员、项目、工具、模型' }
-    : section === 'usage'
-      ? { title: 'AI 用量', description: '模型网关采集的请求、Token 与成本：按模型和成员分布' }
+    ? { title: '总览', description: '团队 AI 全景：活跃度、AI 用量、Agent 会话' }
     : section === 'users'
-      ? { title: '用户数据', description: '按成员查看项目参与、会话活动、AI 消耗与工具质量' }
+      ? { title: '用户', description: '按成员查看参与项目、研发活动与 AI 消耗' }
     : section === 'projects'
-      ? { title: '项目数据', description: '按 Git 远程仓库查看成员参与、会话产出、Token 与运行异常' }
-    : section === 'accounts'
-      ? { title: '账号与权限', description: '统一管理账号申请、用户状态、角色权限与 Git 邮箱映射' }
-    : section === 'sync'
-      ? { title: '同步状态', description: '查看每位用户的 Session 同步进度与健康情况' }
-      : section === 'sessions'
-        ? { title: '会话', description: '按用户与项目查看同步的 Session，并按需打开分析详情' }
-        : { title: '账号与权限', description: '统一管理账号申请、用户状态和角色权限' }
-  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">AI</div><div><Typography.Text strong>TEAM PLATFORM</Typography.Text><Typography.Text type="secondary" className="blockText">管理控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={[...(canEdit ? [{ key: 'dashboard', label: '总览' }, { key: 'usage', label: 'AI 用量' }, { key: 'users', label: '用户' }, { key: 'projects', label: '项目' }, { key: 'sessions', label: '会话' }] : []), { key: 'accounts', label: '账号与权限' }, ...(canEdit ? [{ key: 'sync', label: '同步状态' }] : [])]} /><div className="siderUser"><Avatar>{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardPanel onOpenSession={setDetail} /> : section === 'usage' ? <UsagePanel /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : section === 'sessions' ? <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'accounts' ? <><AccountsPanel users={users} loading={loading} columns={columns} /><GitEmailsPanel /></> : <SyncStatusPanel />}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
+      ? { title: '项目', description: '按 Git 项目查看提交趋势、作者分布与 AI 使用' }
+      : { title: '账号与权限', description: '账号申请审核、角色权限、Git 邮箱映射与同步状态' }
+  const menuItems = [
+    { key: 'dashboard' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-blue" />总览</span> },
+    { key: 'users' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-purple" />用户</span> },
+    { key: 'projects' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-green" />项目</span> },
+    { key: 'accounts' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-orange" />账号与权限</span> },
+  ]
+  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">✦</div><div><Typography.Text strong className="aiBrandName">HiveMind · AI 研发平台</Typography.Text><Typography.Text type="secondary" className="blockText">团队智能控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={canEdit ? menuItems : [menuItems[3]!]} /><div className="siderUser"><Avatar className="aiAvatar">{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Tag className="aiStatusTag" color="blue">● 数据同步中</Tag><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardSection sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : <><AccountsPanel users={users} loading={loading} columns={columns} />{canEdit && <GitEmailsPanel />}{canEdit && <SyncStatusPanel />}</>}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
 }
 
 /** 会话详情抽屉：完整指标 + 分组时间线 + 工具耗时。 */
@@ -323,6 +321,15 @@ function SessionDetailDrawer({ detail, onClose }: { detail: SessionDetail | unde
 }
 
 /** 总览：统一指标卡 + 趋势 + 用户/项目/工具/模型排行 + 最近会话。 */
+/** 总览页：Tab 合并 团队总览 / AI 用量 / Agent 会话。 */
+function DashboardSection({ sessions, loading, onOpenSession }: { sessions: SessionOwner[]; loading: boolean; onOpenSession: (d: SessionDetail) => void }) {
+  return <Tabs className="aiTabs" defaultActiveKey="overview" items={[
+    { key: 'overview', label: <span className="aiTabLabel"><i className="aiDot dot-blue" />团队总览</span>, children: <DashboardPanel onOpenSession={onOpenSession} /> },
+    { key: 'usage', label: <span className="aiTabLabel"><i className="aiDot dot-purple" />AI 用量</span>, children: <UsagePanel /> },
+    { key: 'sessions', label: <span className="aiTabLabel"><i className="aiDot dot-green" />Agent 会话</span>, children: <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={onOpenSession} /> },
+  ]} />
+}
+
 function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) => void }) {
   const [days, setDays] = useState<1 | 7 | 30>(7)
   const [data, setData] = useState<Overview>()
