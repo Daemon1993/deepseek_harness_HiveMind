@@ -68,7 +68,7 @@ type ProjectDetail = {
   gitRemote: string; projectName: string; rangeDays: number; generatedAt: string
   summary: { commits: number; activeDevelopers: number; activeDays: number; insertions: number; deletions: number; lastCommitAt: number; topChangedFiles: number; sessions: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; lastSessionAt: number }
   trend: { day: string; commits: number; insertions: number; deletions: number }[]
-  authors: { authorEmail: string; authorName: string; commits: number; insertions: number; deletions: number; boundUserName?: string }[]
+  authors: { authorEmail: string; authorName: string; commits: number; insertions: number; deletions: number; boundUserName?: string; recentCommits: ProjectDetailCommit[] }[]
   commitTypes: { type: string; count: number }[]
   hotDirectories: { directory: string; count: number }[]
   models: { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }[]
@@ -583,10 +583,12 @@ function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | u
   const s = data?.summary
   const trendMax = Math.max(1, ...(data?.trend ?? []).map(item => item.commits))
   const typeTotal = (data?.commitTypes ?? []).reduce((sum, item) => sum + item.count, 0)
-  const authorColumns: ColumnsType<ProjectDetail['authors'][number]> = [
-    { title: '作者', render: (_, author) => <Space><Avatar shape="square" size="small">{author.authorName.slice(0, 1)}</Avatar><div><Typography.Text strong>{author.authorName}</Typography.Text><Typography.Text code copyable type="secondary" className="blockText">{author.authorEmail}</Typography.Text>{author.boundUserName !== undefined && <Tag color="green">已绑定：{author.boundUserName}</Tag>}</div></Space> },
-    { title: '提交', dataIndex: 'commits', width: 90 },
-    { title: '代码增删', width: 130, render: (_, author) => <span><Typography.Text type="success">+{author.insertions}</Typography.Text> <Typography.Text type="danger">-{author.deletions}</Typography.Text></span> },
+  const authorCommitColumns: ColumnsType<ProjectDetailCommit> = [
+    { title: '提交', width: 82, render: (_, commit) => <Typography.Text code copyable>{commit.commitHash.slice(0, 8)}</Typography.Text> },
+    { title: '说明', render: (_, commit) => <div><Typography.Text>{commit.subject ?? commit.message ?? '—'}</Typography.Text>{commit.changedFiles !== undefined && commit.changedFiles.length > 0 && <Typography.Text type="secondary" className="blockText">{commit.changedFiles.slice(0, 4).join(' · ')}{commit.changedFiles.length > 4 ? ` +${commit.changedFiles.length - 4}` : ''}</Typography.Text>}</div> },
+    { title: '类型', width: 86, render: (_, commit) => { const meta = COMMIT_TYPE_META[commit.type] ?? COMMIT_TYPE_META['other']!; return <Tag color={meta.color} className="aiCommitTag">{meta.label}</Tag> } },
+    { title: '增删', width: 112, render: (_, commit) => <span><Typography.Text type="success">+{commit.insertions}</Typography.Text> <Typography.Text type="danger">-{commit.deletions}</Typography.Text></span> },
+    { title: '时间', width: 158, dataIndex: 'time', render: value => new Date(value).toLocaleString() },
   ]
   const commitColumns: ColumnsType<ProjectDetailCommit> = [
     { title: '提交', width: 90, render: (_, commit) => <Typography.Text code copyable>{commit.commitHash.slice(0, 8)}</Typography.Text> },
@@ -640,11 +642,19 @@ function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | u
           </Row>
           <Table rowKey="model" size="small" columns={sessionModelColumns} dataSource={data?.models ?? []} pagination={false} locale={{ emptyText: '暂无会话数据' }} />
         </Card></Col>
-        <Col xs={24} xl={12}><Card size="small" title="作者分布"><Table rowKey="authorEmail" size="small" columns={authorColumns} dataSource={data?.authors ?? []} pagination={false} locale={{ emptyText: '暂无作者数据' }} /></Card></Col>
+        <Col xs={24} xl={12}><Card size="small" title="作者分布与提交" extra={<Typography.Text type="secondary">展开作者查看其提交</Typography.Text>}>
+          <Collapse className="aiGroupCollapse" items={(data?.authors ?? []).map(author => ({
+            key: author.authorEmail,
+            label: <span className="aiGroupLabel"><Avatar shape="square" size="small" className="aiAvatar">{author.authorName.slice(0, 1)}</Avatar><strong>{author.authorName}</strong>{author.boundUserName !== undefined && <Tag color="green" style={{ marginLeft: 4 }}>{author.boundUserName}</Tag>}<Tag>{author.commits} 提交</Tag><Typography.Text type="secondary">+{author.insertions} / -{author.deletions}</Typography.Text></span>,
+            children: author.recentCommits.length === 0
+              ? <Empty description="该窗口内暂无此作者提交详情" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              : <Table rowKey="commitHash" size="small" columns={authorCommitColumns} dataSource={author.recentCommits} pagination={false} />,
+          }))} />
+        </Card></Col>
       </Row>
       <Row gutter={[12, 12]}>
         <Col xs={24} xl={10}><Card size="small" title="高频变更目录"><HBarChart color="green" rows={(data?.hotDirectories ?? []).map(item => ({ label: item.directory, value: item.count, display: `${item.count} 个文件` }))} /></Card></Col>
-        <Col xs={24} xl={14}><Card size="small" title="最近提交" extra={<Typography.Text type="secondary">Git 作者归属优先，未绑定显示 Git 名</Typography.Text>}><Table rowKey="commitHash" size="small" columns={commitColumns} dataSource={data?.commits ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 900 }} /></Card></Col>
+        <Col xs={24} xl={14}><Card size="small" title="最近提交（全部）" extra={<Typography.Text type="secondary">Git 作者归属优先，未绑定显示 Git 名</Typography.Text>}><Table rowKey="commitHash" size="small" columns={commitColumns} dataSource={data?.commits ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 900 }} /></Card></Col>
       </Row>
     </Space>}
   </Drawer>
@@ -688,6 +698,24 @@ function UserDetailDrawer({ detail, onClose }: { detail: UserDetailRef | undefin
     { title: 'Session', dataIndex: 'sessions', width: 70 },
     { title: '最后活跃', width: 130, dataIndex: 'lastActiveAt', render: value => value === 0 ? '—' : new Date(value).toLocaleDateString() },
   ]
+  // 最近提交按项目分组：项目 → 该项目的提交列表。
+  const groupedByProject = (data?.commits ?? []).reduce<Map<string, { gitRemote?: string; commits: UserDetail['commits'] }>>((all, commit) => {
+    const key = commit.gitRemote ?? '__local__'
+    const group = all.get(key) ?? { ...(commit.gitRemote === undefined ? {} : { gitRemote: commit.gitRemote }), commits: [] }
+    group.commits.push(commit)
+    all.set(key, group)
+    return all
+  }, new Map())
+  const projectGroups = [...groupedByProject.entries()]
+    .map(([key, group]) => ({
+      key,
+      projectName: group.gitRemote === undefined ? '本地仓库（未关联远程）' : group.gitRemote.split('/').at(-1)?.replace(/\.git$/, '') ?? group.gitRemote,
+      gitRemote: group.gitRemote,
+      commits: group.commits,
+      insertions: group.commits.reduce((sum, commit) => sum + commit.insertions, 0),
+      deletions: group.commits.reduce((sum, commit) => sum + commit.deletions, 0),
+    }))
+    .sort((a, b) => b.commits.length - a.commits.length)
   const trendMax = Math.max(1, ...(data?.commitTrend ?? []).map(item => item.commits))
   const typeTotal = (data?.commitTypes ?? []).reduce((sum, item) => sum + item.count, 0)
   const roleMeta: Record<string, { label: string; color: string }> = {
@@ -726,7 +754,13 @@ function UserDetailDrawer({ detail, onClose }: { detail: UserDetailRef | undefin
         <Col xs={24} xl={10}><Card size="small" title="参与项目"><Table rowKey="gitRemote" size="small" pagination={false} dataSource={data?.projects ?? []} locale={{ emptyText: '统计范围内无提交' }} columns={projectColumns} /></Card></Col>
         <Col xs={24} xl={14}><Card size="small" title="AI 用量（网关记录）"><Table rowKey="model" size="small" pagination={false} dataSource={data?.models ?? []} locale={{ emptyText: '统计范围内无模型请求' }} columns={[{ title: '模型', dataIndex: 'model', ellipsis: true }, { title: '请求', dataIndex: 'requests', width: 80 }, { title: '输入 Token', width: 100, dataIndex: 'inputTokens', render: fmtNum }, { title: '输出 Token', width: 100, dataIndex: 'outputTokens', render: fmtNum }, { title: '成本', width: 100, dataIndex: 'costCny', render: fmtCny }]} /></Card></Col>
       </Row>
-      <Card size="small" title="最近提交"><Table rowKey="commitHash" size="small" columns={commitColumns} dataSource={data?.commits ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 900 }} /></Card>
+      <Card size="small" title="最近提交" extra={<Typography.Text type="secondary">按项目分组</Typography.Text>}>
+        {projectGroups.length === 0 ? <Empty description="统计范围内无提交" /> : <Collapse className="aiGroupCollapse" defaultActiveKey={projectGroups.slice(0, 1).map(group => group.key)} items={projectGroups.map(group => ({
+          key: group.key,
+          label: <span className="aiGroupLabel"><i className={`aiDot ${group.gitRemote === undefined ? 'dot-orange' : 'dot-blue'}`} /><strong>{group.projectName}</strong><Tag>{group.commits.length} 提交</Tag><Typography.Text type="secondary">+{group.insertions} / -{group.deletions}</Typography.Text>{group.gitRemote !== undefined && <Typography.Text code copyable type="secondary" className="blockText">{group.gitRemote}</Typography.Text>}</span>,
+          children: <Table rowKey="commitHash" size="small" columns={commitColumns} dataSource={group.commits} pagination={false} />,
+        }))} />}
+      </Card>
       <Card size="small" title="最近 Session"><Table rowKey="sessionId" size="small" columns={sessionColumns} dataSource={data?.recentSessions ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 800 }} /></Card>
     </Space>}
   </Drawer>

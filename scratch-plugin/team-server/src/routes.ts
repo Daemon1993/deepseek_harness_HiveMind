@@ -595,10 +595,19 @@ async function handleAdminProjectDetail(ctx: TeamContext, sessions: AuthSessions
     models: [...models.values()].sort((a, b) => b.totalTokens - a.totalTokens),
     tools: [...tools.values()].sort((a, b) => b.calls - a.calls),
     trend,
-    authors: authors.map(author => ({
-      ...author,
-      ...(authorEmails.get(author.authorEmail.toLowerCase()) === undefined ? {} : { boundUserName: authorEmails.get(author.authorEmail.toLowerCase()) }),
-    })),
+    authors: authors.map(author => {
+      const normalizedEmail = author.authorEmail.toLowerCase()
+      // 每个作者最近 N 条提交（用于按提交人分类浏览）。
+      const recentCommits = commits
+        .filter(commit => commit.authorEmail?.toLowerCase() === normalizedEmail || (commit.authorEmail === undefined && author.authorEmail === 'unknown'))
+        .slice(0, 10)
+        .map(commit => ({ ...commit, type: classifyCommitType(commit.subject) }))
+      return {
+        ...author,
+        ...(authorEmails.get(normalizedEmail) === undefined ? {} : { boundUserName: authorEmails.get(normalizedEmail) }),
+        recentCommits,
+      }
+    }),
     commitTypes: [...typeBuckets.entries()]
       .map(([type, count]) => ({ type, count }))
       .sort((a, b) => b.count - a.count),
