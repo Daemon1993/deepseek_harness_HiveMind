@@ -12,7 +12,7 @@ import { promisify } from 'node:util'
 const COMPANY_TOKEN_REF = credentialRef('TEAM_COMPANY_TOKEN')
 const run = promisify(execFile)
 /** 增量扫描默认间隔（分钟），可用 TEAM_GIT_SCAN_MINUTES 覆盖。 */
-const DEFAULT_SCAN_MINUTES = 10
+const DEFAULT_SCAN_MINUTES = 5
 /** 每次上报的提交批量大小。 */
 const UPLOAD_BATCH_SIZE = 100
 /** 扫描用 git log 的最大输出缓冲（大仓库历史可远超 execFile 默认 1MB）。 */
