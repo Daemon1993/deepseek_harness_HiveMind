@@ -548,6 +548,104 @@ export class TeamDatabase {
     return result.rows.map(row => row.path)
   }
 
+  /** One user's commit rows in the requested window, newest first. */
+  async listCommitsByUser(userId: string, since: number): Promise<TeamCodeChange[]> {
+    const result = await this.client().query<{
+      commit_hash: string
+      git_remote: string | null
+      author_name: string | null
+      author_email: string | null
+      subject: string | null
+      message: string | null
+      changed_files: string[]
+      files_changed: number | null
+      insertions: number | null
+      deletions: number | null
+      commit_time: string | null
+      created_at: Date
+    }>(
+      `SELECT changes.commit_hash, NULLIF(changes.git_remote, '') AS git_remote,
+              changes.author_name, changes.author_email, changes.subject,
+              changes.message, changes.changed_files, changes.files_changed,
+              changes.insertions, changes.deletions, changes.commit_time,
+              changes.created_at
+       FROM team_code_changes AS changes
+       WHERE changes.user_id = $1
+         AND COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $2
+       ORDER BY COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) DESC`,
+      [userId, since],
+    )
+    return result.rows.map(row => ({
+      userId,
+      userName: '',
+      commitHash: row.commit_hash,
+      ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }),
+      ...(row.author_name === null ? {} : { authorName: row.author_name }),
+      ...(row.author_email === null ? {} : { authorEmail: row.author_email }),
+      ...(row.subject === null ? {} : { subject: row.subject }),
+      ...(row.message === null ? {} : { message: row.message }),
+      changedFiles: row.changed_files,
+      files: row.files_changed ?? 0,
+      insertions: row.insertions ?? 0,
+      deletions: row.deletions ?? 0,
+      time: row.commit_time === null ? row.created_at.getTime() : Number(row.commit_time),
+    }))
+  }
+
+  /** One user's model-usage rows in the requested window, newest first. */
+  async listModelUsageByUser(userId: string, since: number): Promise<TeamModelUsageRow[]> {
+    const result = await this.client().query<{
+      request_id: string
+      model: string
+      input_tokens: number
+      output_tokens: number
+      cost_cny: string
+      latency_ms: number
+      status: number
+      created_at: Date
+    }>(
+      `SELECT usage.request_id, usage.model, usage.input_tokens, usage.output_tokens,
+              usage.cost_cny, usage.latency_ms, usage.status, usage.created_at
+       FROM team_model_usage AS usage
+       WHERE usage.user_id = $1 AND usage.created_at >= to_timestamp($2 / 1000.0)
+       ORDER BY usage.created_at DESC`,
+      [userId, since],
+    )
+    return result.rows.map(row => ({
+      userId,
+      userName: '',
+      requestId: row.request_id,
+      model: row.model,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      costCny: Number(row.cost_cny),
+      latencyMs: row.latency_ms,
+      status: row.status,
+      createdAt: row.created_at.toISOString(),
+    }))
+  }
+
+  /** One user's session analytics snapshots, newest activity first. */
+  async listAnalyticsByUser(userId: string): Promise<TeamSessionAnalytics[]> {
+    const result = await this.client().query<{ session_id: string; project_name: string | null; git_remote: string | null; title: string; last_active_at: string; metrics: TeamSessionAnalytics['metrics'] }>(
+      `SELECT analytics.session_id, analytics.project_name, analytics.git_remote,
+              analytics.title, analytics.last_active_at, analytics.metrics
+       FROM team_session_analytics AS analytics
+       JOIN team_session_log AS log ON log.session_id = analytics.session_id
+       WHERE log.user_id = $1
+       ORDER BY analytics.last_active_at DESC`,
+      [userId],
+    )
+    return result.rows.map(row => ({
+      sessionId: row.session_id,
+      ...(row.project_name === null ? {} : { projectName: row.project_name }),
+      ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }),
+      title: row.title,
+      lastActiveAt: Number(row.last_active_at),
+      metrics: row.metrics,
+    }))
+  }
+
   /** List Git-email → platform-user bindings for author attribution. */
   async listGitEmailBindings(): Promise<TeamGitEmailBinding[]> {
 

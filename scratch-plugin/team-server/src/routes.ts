@@ -575,6 +575,72 @@ async function handleAdminProjectDetail(ctx: TeamContext, sessions: AuthSessions
   })
 }
 
+async function handleAdminUserDetail(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
+  if (!await requireAdmin(ctx, sessions, req, res)) return
+  const userId = decodeURIComponent(new URL(req.url ?? '', 'http://localhost').pathname.split('/').at(-1) ?? '')
+  const user = ctx.team.getUser(userId)
+  if (user === undefined) { sendJson(res, 404, { message: '用户不存在' }); return }
+  const daysParam = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('days') ?? '30')
+  const days = daysParam === 7 || daysParam === 30 || daysParam === 90 ? daysParam : 30
+  const since = Date.now() - days * 24 * 60 * 60 * 1000
+  const [commits, usageRows, analytics] = await Promise.all([
+    ctx.team.listCommitsByUser(userId, since),
+    ctx.team.listModelUsageByUser(userId, since),
+    ctx.team.listAnalyticsByUser(userId),
+  ])
+  const projectCommits = new Map<string, number>()
+  for (const commit of commits) {
+    if (commit.gitRemote === undefined) continue
+    projectCommits.set(commit.gitRemote, (projectCommits.get(commit.gitRemote) ?? 0) + 1)
+  }
+  const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; costCny: number }>()
+  for (const row of usageRows) {
+    const model = models.get(row.model) ?? { model: row.model, requests: 0, inputTokens: 0, outputTokens: 0, costCny: 0 }
+    model.requests++
+    model.inputTokens += row.inputTokens
+    model.outputTokens += row.outputTokens
+    model.costCny += row.costCny
+    models.set(row.model, model)
+  }
+  const analyticsWindows = analytics.filter(snapshot => snapshot.lastActiveAt >= since)
+  const sessionProjects = new Set(analytics.flatMap(snapshot => snapshot.gitRemote === undefined ? [] : [snapshot.gitRemote]))
+  const activeDays = new Set(commits.map(commit => new Date(commit.time).toISOString().slice(0, 10))).size
+  sendJson(res, 200, {
+    userId,
+    userName: user.name,
+    rangeDays: days,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      commits: commits.length,
+      insertions: commits.reduce((sum, commit) => sum + commit.insertions, 0),
+      deletions: commits.reduce((sum, commit) => sum + commit.deletions, 0),
+      activeDays,
+      activeProjects: projectCommits.size,
+      sessions: analyticsWindows.length,
+      toolCalls: analyticsWindows.reduce((sum, snapshot) => sum + snapshot.metrics.toolCalls, 0),
+      toolFailures: analyticsWindows.reduce((sum, snapshot) => sum + snapshot.metrics.toolFailures, 0),
+      modelRequests: usageRows.length,
+      totalTokens: usageRows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0),
+      costCny: usageRows.reduce((sum, row) => sum + row.costCny, 0),
+      lastActiveAt: Math.max(commits[0]?.time ?? 0, analyticsWindows[0]?.lastActiveAt ?? 0),
+    },
+    projects: [...projectCommits.entries()]
+      .map(([gitRemote, count]) => ({ gitRemote, projectName: projectName(gitRemote), commits: count, hasSessions: sessionProjects.has(gitRemote) }))
+      .sort((a, b) => b.commits - a.commits),
+    models: [...models.values()].sort((a, b) => b.costCny - a.costCny),
+    commits: commits.slice(0, 100).map(commit => ({ ...commit, type: classifyCommitType(commit.subject) })),
+    recentSessions: analyticsWindows.slice(0, 50).map(snapshot => ({
+      sessionId: snapshot.sessionId,
+      title: snapshot.title,
+      lastActiveAt: snapshot.lastActiveAt,
+      toolCalls: snapshot.metrics.toolCalls,
+      toolFailures: snapshot.metrics.toolFailures,
+      ...(snapshot.gitRemote === undefined ? {} : { gitRemote: snapshot.gitRemote }),
+    })),
+  })
+}
+
 async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
   if (!await requireAdmin(ctx, sessions, req, res)) return
@@ -1282,6 +1348,7 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/usage', handler: (req, res) => handleAdminUsage(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/git-emails', handler: (req, res) => handleAdminGitEmails(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/projects', handler: (req, res) => handleAdminProjectDetail(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'prefix', path: '/team/admin/user-detail', handler: (req, res) => handleAdminUserDetail(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/insights/sessions', handler: (req, res) => handleAdminSessionTimeline(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/users', handler: (req, res) => handleAdminUser(ctx, sessions, req, res) }),
   ctx.webServer.register({

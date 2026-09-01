@@ -60,7 +60,7 @@ type Usage = {
 }
 
 // ── 项目详情类型（/team/admin/projects/:remote）──────────────
-type ProjectDetailCommit = { userId: string; userName: string; commitHash: string; authorName?: string; authorEmail?: string; subject?: string; message?: string; changedFiles?: string[]; files: number; insertions: number; deletions: number; time: number; type: string }
+type ProjectDetailCommit = { userId: string; userName: string; commitHash: string; gitRemote?: string; authorName?: string; authorEmail?: string; subject?: string; message?: string; changedFiles?: string[]; files: number; insertions: number; deletions: number; time: number; type: string }
 /** Drawer 入口引用：仅携带定位信息，实际数据按需拉取。 */
 type ProjectDetailRef = { gitRemote: string; projectName?: string }
 type ProjectDetail = {
@@ -72,6 +72,18 @@ type ProjectDetail = {
   hotDirectories: { directory: string; count: number }[]
   commits: ProjectDetailCommit[]
 }
+
+// ── 用户详情类型（/team/admin/user-detail/:userId）────────────
+type UserDetail = {
+  userId: string; userName: string; rangeDays: number; generatedAt: string
+  summary: { commits: number; insertions: number; deletions: number; activeDays: number; activeProjects: number; sessions: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; costCny: number; lastActiveAt: number }
+  projects: { gitRemote: string; projectName: string; commits: number; hasSessions: boolean }[]
+  models: { model: string; requests: number; inputTokens: number; outputTokens: number; costCny: number }[]
+  commits: ProjectDetailCommit[]
+  recentSessions: { sessionId: string; title: string; lastActiveAt: number; toolCalls: number; toolFailures: number; gitRemote?: string }[]
+}
+/** Drawer 入口引用：仅携带定位信息，实际数据按需拉取。 */
+type UserDetailRef = { userId: string; userName?: string }
 
 const statusOptions = [{ value: 'pending', label: '待审核' }, { value: 'active', label: '已激活' }, { value: 'rejected', label: '已拒绝' }, { value: 'disabled', label: '已禁用' }] satisfies { value: Status; label: string }[]
 const roleOptions = [{ value: 'admin', label: '管理员' }, { value: 'developer', label: '开发者' }, { value: 'reviewer', label: '审核员' }, { value: 'user', label: '普通用户' }] satisfies { value: Role; label: string }[]
@@ -562,6 +574,59 @@ function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | u
   </Drawer>
 }
 
+/** 用户详情抽屉：参与项目/研发活动/AI 用量/Agent 用量。 */
+function UserDetailDrawer({ detail, onClose }: { detail: UserDetailRef | undefined; onClose: () => void }) {
+  const [days, setDays] = useState<7 | 30 | 90>(30)
+  const [data, setData] = useState<UserDetail>()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    if (detail === undefined) return
+    let live = true
+    setLoading(true); setError('')
+    void fetch(`/team/admin/user-detail/${encodeURIComponent(detail.userId)}?days=${days}`).then(async response => {
+      const body = await response.json() as UserDetail & { message?: string }
+      if (!response.ok) throw new Error(body.message ?? '加载用户详情失败')
+      if (live) setData(body)
+    }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载用户详情失败') }).finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [detail, days])
+  const s = data?.summary
+  const commitColumns: ColumnsType<UserDetail['commits'][number]> = [
+    { title: '提交', width: 90, render: (_, commit) => <Typography.Text code copyable>{commit.commitHash.slice(0, 8)}</Typography.Text> },
+    { title: '项目', width: 200, render: (_, commit) => commit.gitRemote === undefined ? <Tag>本地仓库</Tag> : <Typography.Text ellipsis={{ tooltip: commit.gitRemote }} style={{ maxWidth: 190, display: 'inline-block' }}>{commit.gitRemote.split('/').at(-1)?.replace(/\.git$/, '')}</Typography.Text> },
+    { title: '说明', render: (_, commit) => commit.subject ?? commit.message ?? '—' },
+    { title: '类型', width: 90, render: (_, commit) => { const meta = COMMIT_TYPE_META[commit.type] ?? COMMIT_TYPE_META['other']!; return <Tag color={meta.color}>{meta.label}</Tag> } },
+    { title: '增删', width: 120, render: (_, commit) => <span><Typography.Text type="success">+{commit.insertions}</Typography.Text> <Typography.Text type="danger">-{commit.deletions}</Typography.Text></span> },
+    { title: '时间', width: 170, dataIndex: 'time', render: value => new Date(value).toLocaleString() },
+  ]
+  const sessionColumns: ColumnsType<UserDetail['recentSessions'][number]> = [
+    { title: '会话', render: (_, session) => session.title },
+    { title: '项目', width: 200, render: (_, session) => session.gitRemote === undefined ? <Tag>未关联</Tag> : <Typography.Text ellipsis={{ tooltip: session.gitRemote }} style={{ maxWidth: 190, display: 'inline-block' }}>{session.gitRemote.split('/').at(-1)?.replace(/\.git$/, '')}</Typography.Text> },
+    { title: '工具', dataIndex: 'toolCalls', width: 80 },
+    { title: '失败', dataIndex: 'toolFailures', width: 70, render: value => value === 0 ? '—' : <Tag color="red">{value}</Tag> },
+    { title: '最后活跃', width: 170, dataIndex: 'lastActiveAt', render: value => new Date(value).toLocaleString() },
+  ]
+  return <Drawer width={Math.min(1180, window.innerWidth)} open={detail !== undefined} onClose={onClose} className="trajectoryDrawer" title={detail === undefined ? '' : <span>{data?.userName ?? detail.userName} <Typography.Text type="secondary">用户详情</Typography.Text></span>} extra={<Segmented value={days} onChange={value => setDays(value as 7 | 30 | 90)} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />}>
+    {detail === undefined ? null : <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
+      <Row gutter={[12, 12]} className="trajectoryMetrics" style={{ borderRadius: 14 }}>
+        <div><span>研发提交</span><strong>{s?.commits ?? 0}</strong><small>近 {days} 天</small></div>
+        <div><span>代码增删</span><strong>+{s?.insertions ?? 0} / -{s?.deletions ?? 0}</strong><small>近 {days} 天</small></div>
+        <div><span>参与项目</span><strong>{s?.activeProjects ?? 0}</strong><small>有提交的项目</small></div>
+        <div><span>Session</span><strong>{s?.sessions ?? 0}</strong><small>{s === undefined ? '' : `${s.toolCalls} 次工具调用 · ${s.toolFailures} 次失败`}</small></div>
+        <div><span>AI 成本</span><strong>{fmtCny(s?.costCny ?? 0)}</strong><small>{s === undefined ? '' : `${fmtNum(s.totalTokens)} Token · ${s.modelRequests} 请求`}</small></div>
+      </Row>
+      <Row gutter={[12, 12]}>
+        <Col xs={24} xl={10}><Card size="small" title="参与项目"><Table rowKey="gitRemote" size="small" pagination={false} dataSource={data?.projects ?? []} locale={{ emptyText: '统计范围内无提交' }} columns={[{ title: '项目', render: (_, project) => <div><Typography.Text strong>{project.projectName}</Typography.Text>{project.hasSessions && <Tag color="blue" style={{ marginLeft: 6 }}>有 Session</Tag>}<Typography.Text code copyable type="secondary" className="blockText">{project.gitRemote}</Typography.Text></div> }, { title: '提交', dataIndex: 'commits', width: 80 }]} /></Card></Col>
+        <Col xs={24} xl={14}><Card size="small" title="AI 用量（网关记录）"><Table rowKey="model" size="small" pagination={false} dataSource={data?.models ?? []} locale={{ emptyText: '统计范围内无模型请求' }} columns={[{ title: '模型', dataIndex: 'model', ellipsis: true }, { title: '请求', dataIndex: 'requests', width: 80 }, { title: '总 Token', width: 110, render: (_, model) => fmtNum(model.inputTokens + model.outputTokens) }, { title: '成本', width: 100, dataIndex: 'costCny', render: fmtCny }]} /></Card></Col>
+      </Row>
+      <Card size="small" title="最近提交"><Table rowKey="commitHash" size="small" columns={commitColumns} dataSource={data?.commits ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 900 }} /></Card>
+      <Card size="small" title="最近 Session"><Table rowKey="sessionId" size="small" columns={sessionColumns} dataSource={data?.recentSessions ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 800 }} /></Card>
+    </Space>}
+  </Drawer>
+}
+
 function useOverview(days: 1 | 7 | 30): { data?: Overview; loading: boolean; error: string } {
   const [data, setData] = useState<Overview>()
   const [loading, setLoading] = useState(true)
@@ -642,6 +707,7 @@ function DimensionDetail({
 function UserDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) => void }) {
   const [days, setDays] = useState<1 | 7 | 30>(7)
   const { data, loading, error } = useOverview(days)
+  const [userDetail, setUserDetail] = useState<UserDetailRef>()
   const columns: ColumnsType<OverviewUser> = [
     { title: '用户', render: (_, user) => <Space><Avatar shape="square">{user.userName.slice(0, 1)}</Avatar><div><Typography.Text strong>{user.userName}</Typography.Text><Typography.Text type="secondary" className="blockText">{user.userId}</Typography.Text></div></Space> },
     { title: '项目', dataIndex: 'projects', width: 75 },
@@ -654,11 +720,13 @@ function UserDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =>
     { title: '工具成功率', width: 110, render: (_, user) => user.toolCalls === 0 ? '—' : `${Math.round((user.toolCalls - user.toolFailures) / user.toolCalls * 1000) / 10}%` },
     { title: '活跃时长', width: 100, render: (_, user) => fmt(user.durationMs) },
     { title: '最后活跃', dataIndex: 'lastActiveAt', width: 180, render: value => value === 0 ? '—' : new Date(value).toLocaleString() },
+    { title: '操作', width: 90, render: (_, user) => <Button type="link" onClick={() => setUserDetail({ userId: user.userId, userName: user.userName })}>详情</Button> },
   ]
   const totalTokens = data?.users.reduce((sum, user) => sum + user.totalTokens, 0) ?? 0
   return <Space direction="vertical" size={18} className="analyticsPage"><DimensionToolbar days={days} onChange={setDays} />{error && <Alert type="error" showIcon message={error} />}
     <Row gutter={[16, 16]} className="analyticsStats"><Col xs={12} lg={6}><Card loading={loading}><Statistic title="活跃用户" value={data?.users.length ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="用户会话" value={data?.users.reduce((sum, user) => sum + user.sessions, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="模型请求" value={data?.users.reduce((sum, user) => sum + user.modelRequests, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Token" value={fmtNum(totalTokens)} /></Card></Col></Row>
     <Card title="用户使用情况" className="analyticsCard"><Table rowKey="userId" loading={loading} columns={columns} dataSource={data?.users ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1350 }} expandable={{ expandedRowRender: user => <DimensionDetail models={user.models} tools={user.tools} commits={user.commits} sessions={(data?.recentSessions ?? []).filter(session => session.userId === user.userId)} onOpenSession={onOpenSession} /> }} /></Card>
+    <UserDetailDrawer detail={userDetail} onClose={() => setUserDetail(undefined)} />
   </Space>
 }
 
