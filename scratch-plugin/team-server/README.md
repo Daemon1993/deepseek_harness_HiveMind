@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The Server plugin for the HiveMind team AI collaboration and knowledge-retention platform. It owns authentication, the model gateway, Session replicas, Git records, and the administration console.
+The Server plugin for the HiveMind team AI engineering platform. It owns authentication, the model gateway, Session replicas, Git records, and the administration console.
 
 See the [repository README](../../README.md) for the complete platform description.
 
@@ -11,8 +11,8 @@ See the [repository README](../../README.md) for the complete platform descripti
 - Authentication: PostgreSQL accounts plus Redis-backed Cookie, Bearer, and SSO-ticket sessions
 - Model gateway: raw forwarding through `/team/api/model/chat/completions` and `/team/api/model/files*` with the Server credential; streaming responses are sniffed for `usage` and each request is priced from a static model table into `team_model_usage`
 - Session replicas: DSH-native artifacts plus a PostgreSQL ownership index, complete-byte validation, and transactional publication
-- Git and code changes: `/team/api/git/ops` and `/team/api/git/changes`; commits carry author identity, message, and changed-file paths, with a Git-email → platform-user binding table for author attribution
-- Administration console: `/team/admin` for overview (including gateway cost), AI-usage, user and project detail analytics (commit trend, author distribution, hot directories, commit-type buckets), accounts, Sessions, sync status, and reconciliation
+- Git commits: `/team/api/git/changes` stores author identity, subject, full message, changed-file paths, and line stats; the idempotency key is `(git_remote, commit_hash)`; administrators bind Git emails to platform users
+- Administration console: `/team/admin` has four sections — Overview (team pulse, gateway usage/cost, Agent Sessions, Git sync log), Users, Projects (trend, authors, hot directories, commit-type buckets), and Accounts (roles, Git-email bindings, Session sync and reconcile)
 - Root routing: `/` redirects to administration; only an administrator can reach `/team/workspace`
 
 ## Build and package
@@ -39,7 +39,9 @@ Administration Session lists use the latest durable `session/title` as the conve
 
 Analytics snapshots carry a projection version. The Server recalculates an older snapshot from its Session replica once, then subsequent administration requests continue reading SQL directly.
 
-After publication, the Server stores a content-free Session analytics snapshot in PostgreSQL. The Client asks Git for the repository root and optional `remote.origin.url`; a plain workspace has no project fields and does not enter project analytics. The snapshot contains the project name, Git fields, title, activity timestamps, counts, durations, tool aggregates, and model usage; it excludes the workspace path, messages, tool arguments, command output, and file content. The Server separately stores commit hashes, subjects, origin remotes, collecting users, timestamps, and change counts. Overview, User, and Project pages aggregate both sources by user id or Git remote without claiming that a commit belongs to a Session. Git-only projects remain visible, while commits without an origin contribute only to User analytics. The Server backfills a missing snapshot when an administrator first loads analytics for an older Session; a Session timeline still reads the native Session artifact and its workspace path on demand.
+After publication, the Server stores a content-free Session analytics snapshot in PostgreSQL. The Client asks Git for the repository root and optional `remote.origin.url`; a plain workspace has no project fields and does not enter project analytics. The snapshot contains the project name, Git fields, title, activity timestamps, counts, durations, tool aggregates, and model usage; it excludes the workspace path, conversation content, tool arguments, command output, and file content.
+
+The Client uploads commit history independently through `git log`. The Server stores hash, author, subject, message, origin remote, changed-file paths, timestamps, and change counts. Overview, User, and Project pages aggregate Session snapshots and Git rows by user id or Git remote without claiming that a commit belongs to a Session. Git-only projects remain visible; commits without an origin contribute only to User analytics. The Server backfills a missing snapshot when an administrator first loads analytics for an older Session; a Session timeline still reads the native Session artifact on demand.
 
 Start the local Server with `./start-local.ps1`; it listens on port 3081 by default.
 

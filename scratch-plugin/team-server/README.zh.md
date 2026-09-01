@@ -2,17 +2,17 @@
 
 [English](README.md) | 中文
 
-服务器侧插件（HiveMind 团队 AI 协作与知识沉淀平台的一部分）。负责认证、模型网关、Session 副本、Git 记录与管理后台。
+服务器侧插件（HiveMind 团队 AI 研发平台的一部分）。负责认证、模型网关、Session 副本、Git 记录与管理后台。
 
 完整平台说明见[仓库 README](../../README.zh.md)。
 
 ## 职责
 
 - 认证：PostgreSQL 账号以及 Redis 支持的 Cookie、Bearer 与 SSO ticket 会话
-- 模型网关：通过 `/team/api/model/chat/completions` 和 `/team/api/model/files*` 原样转发，并使用 Server 凭据
+- 模型网关：通过 `/team/api/model/chat/completions` 和 `/team/api/model/files*` 原样转发，并使用 Server 凭据；流式响应嗅探 `usage`，按静态模型价目写入 `team_model_usage`
 - Session 副本：DSH 原生工件、PostgreSQL 归属索引、完整字节校验与事务发布
-- Git 与代码变更：`/team/api/git/ops` 和 `/team/api/git/changes`
-- 管理后台：`/team/admin` 提供总览、用户与项目分析、账号、Session、同步状态与对账
+- Git 提交：`/team/api/git/changes` 存储作者身份、subject、完整 message、变更文件路径与增删统计；幂等键为 `(git_remote, commit_hash)`；管理员把 Git 邮箱绑定到平台用户
+- 管理后台：`/team/admin` 四个栏目——总览（团队脉搏、网关用量与成本、Agent 会话、Git 同步日志）、用户、项目（提交趋势、作者分布、热目录、提交类型）、账号与权限（角色、Git 邮箱映射、Session 同步与对账）
 - 根路径：`/` 重定向到管理后台，只有管理员能访问 `/team/workspace`
 
 ## 构建与打包
@@ -39,7 +39,9 @@ PostgreSQL 的 `BIGINT` Session 文件大小会在查询时转换为整数，再
 
 统计快照带有投影版本；Server 首次读取旧版快照时从 Session 副本重算一次，后续请求继续直接读取 SQL。
 
-发布完成后，Server 把不含内容的 Session 分析快照写入 PostgreSQL。Client 通过 Git 获取仓库根目录和可选的 `remote.origin.url`；普通工作区没有项目字段，也不会进入项目统计。快照包含项目名称、Git 字段、标题、活动时间、计数、耗时、工具聚合与模型用量，不包含工作区路径、消息、工具参数、命令输出或文件内容。Server 另行存储 commit hash、subject、origin remote、采集用户、时间和增删统计。总览、用户和项目页面按用户 ID 或 Git remote 分别聚合两类数据，不声称某条 commit 属于某个 Session。只有 Git 提交的项目仍会显示；没有 origin 的提交只进入用户统计。管理员首次查看缺少快照的历史 Session 时，Server 会补建快照；单个 Session 时间线仍按需读取原生 Session 工件及其工作区路径。
+发布完成后，Server 把不含内容的 Session 分析快照写入 PostgreSQL。Client 通过 Git 获取仓库根目录和可选的 `remote.origin.url`；普通工作区没有项目字段，也不会进入项目统计。快照包含项目名称、Git 字段、标题、活动时间、计数、耗时、工具聚合与模型用量，不包含工作区路径、对话内容、工具参数、命令输出或文件内容。
+
+Client 通过 `git log` 独立上传提交历史。Server 存储 hash、作者、subject、message、origin remote、变更文件路径、时间和增删统计。总览、用户和项目页面按用户 ID 或 Git remote 分别聚合 Session 快照与 Git 行，不声称某条 commit 属于某个 Session。只有 Git 提交的项目仍会显示；没有 origin 的提交只进入用户统计。管理员首次查看缺少快照的历史 Session 时，Server 会补建快照；单个 Session 时间线仍按需读取原生 Session 工件。
 
 通过 `./start-local.ps1` 启动本地 Server，默认监听 3081 端口。
 
