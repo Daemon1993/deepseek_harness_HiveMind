@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseLogMetadata, parseNameStatus, parseShortStatLog } from '../src/git-hooks-sync.ts'
+import { parseLogMetadata, parseNameStatus, parseShortStatLog } from '../src/git-sync.ts'
 
 describe('parseLogMetadata', () => {
   it('parses commit metadata records with multi-line messages', () => {
