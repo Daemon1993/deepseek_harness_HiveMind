@@ -578,17 +578,16 @@ function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | u
 function UserDetailDrawer({ detail, onClose }: { detail: UserDetailRef | undefined; onClose: () => void }) {
   const [days, setDays] = useState<7 | 30 | 90>(30)
   const [data, setData] = useState<UserDetail>()
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     if (detail === undefined) return
     let live = true
-    setLoading(true); setError('')
+    setError('')
     void fetch(`/team/admin/user-detail/${encodeURIComponent(detail.userId)}?days=${days}`).then(async response => {
       const body = await response.json() as UserDetail & { message?: string }
       if (!response.ok) throw new Error(body.message ?? '加载用户详情失败')
       if (live) setData(body)
-    }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载用户详情失败') }).finally(() => { if (live) setLoading(false) })
+    }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载用户详情失败') })
     return () => { live = false }
   }, [detail, days])
   const s = data?.summary
