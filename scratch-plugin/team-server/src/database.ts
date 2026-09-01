@@ -343,39 +343,41 @@ export class TeamDatabase {
 
   /** Record one batch of code-change summaries; (git_remote, commit_hash) is the idempotency key. */
   async recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void> {
-    for (const commit of commits) {
-      const gitRemote = commit.gitRemote ?? ''
-      await this.client().query(
-        `INSERT INTO team_code_changes (
-           user_id, cwd, git_remote, commit_hash, author_name, author_email,
-           subject, message, changed_files, files_changed, insertions, deletions, commit_time
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
-         ON CONFLICT (git_remote, commit_hash) DO UPDATE SET
-           cwd = COALESCE(team_code_changes.cwd, EXCLUDED.cwd),
-           author_name = COALESCE(team_code_changes.author_name, EXCLUDED.author_name),
-           author_email = COALESCE(team_code_changes.author_email, EXCLUDED.author_email),
-           subject = COALESCE(team_code_changes.subject, EXCLUDED.subject),
-           message = COALESCE(team_code_changes.message, EXCLUDED.message),
-           changed_files = CASE WHEN team_code_changes.changed_files = '[]'::jsonb THEN EXCLUDED.changed_files ELSE team_code_changes.changed_files END,
-           commit_time = COALESCE(team_code_changes.commit_time, EXCLUDED.commit_time)`,
-        [
-          userId,
-          commit.cwd ?? null,
-          gitRemote,
-          commit.commitHash,
-          commit.authorName ?? null,
-          commit.authorEmail ?? null,
-          commit.subject ?? null,
-          commit.message ?? null,
-          JSON.stringify(commit.changedFiles ?? []),
-          commit.files,
-          commit.insertions,
-          commit.deletions,
-          commit.time ?? Date.now(),
-        ],
-      )
-    }
+    if (commits.length === 0) return
+    // 批量插入：一次网络往返写入整批，避免逐条 INSERT 跨网络延迟放大。
+    await this.client().query(
+      `INSERT INTO team_code_changes (
+         user_id, cwd, git_remote, commit_hash, author_name, author_email,
+         subject, message, changed_files, files_changed, insertions, deletions, commit_time
+       )
+       SELECT * FROM unnest(
+         $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+         $7::text[], $8::text[], $9::jsonb[], $10::int[], $11::int[], $12::int[], $13::bigint[]
+       )
+       ON CONFLICT (git_remote, commit_hash) DO UPDATE SET
+         cwd = COALESCE(team_code_changes.cwd, EXCLUDED.cwd),
+         author_name = COALESCE(team_code_changes.author_name, EXCLUDED.author_name),
+         author_email = COALESCE(team_code_changes.author_email, EXCLUDED.author_email),
+         subject = COALESCE(team_code_changes.subject, EXCLUDED.subject),
+         message = COALESCE(team_code_changes.message, EXCLUDED.message),
+         changed_files = CASE WHEN team_code_changes.changed_files = '[]'::jsonb THEN EXCLUDED.changed_files ELSE team_code_changes.changed_files END,
+         commit_time = COALESCE(team_code_changes.commit_time, EXCLUDED.commit_time)`,
+      [
+        commits.map(() => userId),
+        commits.map(commit => commit.cwd ?? null),
+        commits.map(commit => commit.gitRemote ?? ''),
+        commits.map(commit => commit.commitHash),
+        commits.map(commit => commit.authorName ?? null),
+        commits.map(commit => commit.authorEmail ?? null),
+        commits.map(commit => commit.subject ?? null),
+        commits.map(commit => commit.message ?? null),
+        commits.map(commit => JSON.stringify(commit.changedFiles ?? [])),
+        commits.map(commit => commit.files),
+        commits.map(commit => commit.insertions),
+        commits.map(commit => commit.deletions),
+        commits.map(commit => commit.time ?? Date.now()),
+      ],
+    )
   }
 
   /** Read commit summaries in the requested time range, newest first. */
