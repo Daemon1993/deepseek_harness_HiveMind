@@ -1,8 +1,8 @@
-# HiveMind · 团队 AI 协作与知识沉淀平台
+# HiveMind · 团队 AI 研发平台
 
-> 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) **插件系统**构建的团队 AI 平台。
+> 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) **插件系统**构建。
 
-多员工团队 AI 平台：每个员工在本地跑自己的 DSH 实例，一台中央服务器统一认证、代理模型流量、归档会话、跟踪 Git/代码变更，并提供管理后台。"企业 AI 知识中枢"——把员工的 AI 工作过程沉淀成可检索、可复用的公司知识。
+每个员工在本地跑自己的 DSH；中央服务器负责认证、代理模型流量、归档 Session，并采集已导入仓库的 Git 提交。管理后台按用户和项目展示 AI 用量、估算成本与代码交付，两类数据并排查看，不把某条 commit 归给某个 Session。
 
 ## 构建在 DSH 插件系统之上
 
@@ -13,10 +13,9 @@ HiveMind 是两个 Cordis 插件包（`dsh-team-server` + `dsh-team-client`）�
 | `webServer.register / tapIndex / registerFallback` | 挂载路由、注入登录守卫、接管根路径重定向 |
 | `cordis.patch.yml`（`!!js` 配置分叉） | 替换 `llm-deepseek` 的 `baseURL` + `apiKeyEnv`，模型流量搬到网关 |
 | `session/flush` · `created` · `disposed` | 触发会话增量同步（DSH 持久化提交边界） |
-| `tools/post-execute` | 检测 Git 命令、提取代码变更元数据 |
 | `credentials` 服务 | Host 托管公司 token（永不进浏览器） |
 | `ctx.effect()` 生命周期 | 路由/监听器的注册与清理 |
-| `sidebar.footer.action` Client Slot | 同步横幅、账号状态 UI |
+| `sidebar.footer.action` Client Slot | 同步横幅、账号状态、Git 扫描状态 UI |
 
 > 两个插件包：`dsh-team-server`（服务器侧）+ `dsh-team-client`（员工侧）。同一份 DSH 应用，靠环境变量分叉角色。
 
@@ -27,9 +26,9 @@ HiveMind 是两个 Cordis 插件包（`dsh-team-server` + `dsh-team-client`）�
 │ 本地 DSH（web profile）              │      │ 本地 DSH（web profile，team-client 禁用）    │
 │  · llm-deepseek → 网关（patch 替换）  │ ───▶ │  · 认证：PG 账号 + Redis 会话                │
 │  · team-client 插件：登录转发/扣 token │ 同步 │  · 模型网关：chat + Files 透传、真 key 换发  │
-│  · 会话/工具/Git 全在本地执行          │ ───▶ │  · 会话归档：DSH 原生文件 + PG 索引           │
-└──────────────────────────────────────┘      │  · Git/代码变更记录                          │
-                                              │  · 管理后台（总览/账号/会话/同步状态）         │
+│  · 会话/工具在本地执行                  │ ───▶ │  · 会话归档：DSH 原生文件 + PG 索引           │
+│  · Git：导入仓库 + 周期 git log 扫描    │ ───▶ │  · Git 提交入库（作者/说明/变更文件）         │
+└──────────────────────────────────────┘      │  · 管理后台（总览/用户/项目/账号）            │
                                               └──────────────────────────────────────────────┘
 ```
 
@@ -63,6 +62,7 @@ HiveMind 是两个 Cordis 插件包（`dsh-team-server` + `dsh-team-client`）�
 - **模型由 client 决定**：请求体带 `model` 字段，网关原样透传不覆盖——两边都是 DSH，模型名一致
 - **files-first**：client 优先走 Files API（与本地直连行为一致），上传失败自动降级 base64 内联
 - 网关日志/审计带 `model` 字段，每次请求可追溯用了哪个模型
+- 流式响应嗅探 `usage`，按静态模型价目写入 `team_model_usage`，后台展示 Token 与估算成本
 - 一个真 key = 一个共享文件空间：同内容图片天然去重复用
 
 ### 3. 会话同步归档（md5 字节增量）
@@ -80,14 +80,25 @@ session/flush（主）· created · disposed · 挂载补传
 
 ### 4. Git / 代码变更同步
 
-监听 `tools/post-execute` 检测 git 命令（水瀑，必须 `next()`）→ commit 成功后提取元数据上传：
-- `team_git_ops`：操作流水（谁/哪会话/哪项目/动作/成败）
-- `team_code_changes`：commit_hash UNIQUE 幂等（提交/文件数/增删行）
-- 隐私边界：**只传元数据，不传命令参数、commit 消息、diff 内容**
+员工侧导入 Git 仓库后，Client 用 `git log` 抽取提交并批量上报，之后按游标周期增量扫描。不安装 Git Hook，也不监听 `tools/post-execute`。
+
+- 导入：`POST /team/git/import`（目录路径），首次全量抽取该仓库历史提交
+- 增量：启动补扫，并按 `TEAM_GIT_SCAN_MINUTES`（默认 5）轮询；游标写在 `watched.json`
+- 入库：`POST /team/api/git/changes`；幂等键为 `(git_remote, commit_hash)`
+- 字段：作者姓名/邮箱、subject、完整 message、变更文件路径、增删行、提交时间
+- 归因：管理员把 Git 邮箱绑定到平台用户；分析按用户 ID 或 origin remote 独立汇总，不把某条 commit 归给某个 Session
+- 没有 origin 的提交只进入用户统计，不进入项目统计
 
 ### 5. 管理后台
 
-`/team/admin`（仅 admin）：总览仪表盘（指标卡/趋势/排行/模型消耗）、会话分析抽屉（指标/工具耗时/分组时间线）、账号管理、同步状态、手动对账。
+`/team/admin` 四个栏目：
+
+| 栏目 | 内容 |
+|---|---|
+| 总览 | 团队总览、AI 用量（网关成本）、Agent 会话、Git 同步日志 |
+| 用户 | 成员列表；详情含模型/工具、提交类型、按项目分组的提交 |
+| 项目 | 按 Git remote 聚合；详情含提交趋势、作者分布、热目录、提交类型 |
+| 账号与权限 | 账号审核、Git 邮箱映射、Session 同步状态与对账 |
 
 ### 6. 工作台访问控制
 
@@ -140,6 +151,8 @@ DEEPSEEK_API_KEY=sk-xxxx
 ```env
 TEAM_ROLE=client
 TEAM_SERVER_URL=http://127.0.0.1:3081
+# 可选：Git 增量扫描间隔（分钟），默认 5
+# TEAM_GIT_SCAN_MINUTES=5
 ```
 
 > `!!js` 表达式在进程加载时求值：有 `TEAM_SERVER_URL` → llm-deepseek 指向网关 + 公司 token；没有 → 本地直连。同一份 patch 按环境分叉。
