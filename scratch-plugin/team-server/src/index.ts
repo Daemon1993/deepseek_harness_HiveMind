@@ -1,5 +1,5 @@
 import { Service } from "@deepseek-ai/cordis";
-import type { TeamAdminUser, TeamAuditLogInput, TeamAuditLogRow, TeamCodeChange, TeamCodeChangeInput, TeamContext, TeamGitEmailBinding, TeamGitOpInput, TeamModelUsageInput, TeamModelUsageRow, TeamProjectAuthor, TeamProjectTrend, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
+import type { TeamAdminUser, TeamAuditLogInput, TeamAuditLogRow, TeamCodeChange, TeamCodeChangeInput, TeamContext, TeamGitEmailBinding, TeamGitOpInput, TeamProjectAuthor, TeamProjectTrend, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
 
 import users from "./users.json" with { type: "json" };
 
@@ -9,6 +9,7 @@ import type {} from "@deepseek-ai/dsh-credentials";
 import { registerTeamRoutes } from "./routes.ts";
 import { reconcileSessions } from './reconcile.ts'
 import { TeamDatabase, type TeamAccount } from './database.ts'
+import { hashPassword, isPasswordHash, verifyPassword } from './passwords.ts'
 import { writeTeamLog } from './team-log.ts'
 
 export const name = "team-server";
@@ -19,7 +20,7 @@ export class TeamService extends Service implements TeamServiceApi {
   private readonly database = new TeamDatabase()
   async login(userId: string, password: string): Promise<TeamUser | undefined> {
     const user = this.users.get(userId);
-    if (!user || user.status !== 'active' || user.password !== password) return undefined;
+    if (!user || user.status !== 'active' || !await verifyPassword(password, user.password)) return undefined;
     return this.getUser(userId);
   }
 
@@ -41,7 +42,7 @@ export class TeamService extends Service implements TeamServiceApi {
   }
 
   listAdminUsers(): readonly TeamAdminUser[] {
-    return [...this.users.values()].map(user => ({ ...user, role: user.role ?? 'user' }))
+    return [...this.users.values()].map(({ password, ...user }) => ({ ...user, role: user.role ?? 'user', hasPassword: password.length > 0 }))
   }
 
   async updateUser(id: string, patch: Pick<TeamUser, 'name' | 'status' | 'role'>, password?: string): Promise<TeamUser | undefined> {
@@ -50,7 +51,7 @@ export class TeamService extends Service implements TeamServiceApi {
     user.name = patch.name.trim()
     user.status = patch.status
     user.role = patch.role
-    if (password !== undefined) user.password = password
+    if (password !== undefined) user.password = await hashPassword(password)
     await this.database.saveAccount(user)
     return this.getUser(id)
   }
@@ -85,16 +86,8 @@ export class TeamService extends Service implements TeamServiceApi {
     return this.database.recordGitOps(userId, ops)
   }
 
-  async recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void> {
-    return this.database.recordCodeChanges(userId, commits)
-  }
-
-  async recordModelUsage(userId: string, usage: TeamModelUsageInput): Promise<void> {
-    return this.database.recordModelUsage(userId, usage)
-  }
-
-  async listModelUsage(since: number): Promise<readonly TeamModelUsageRow[]> {
-    return this.database.listModelUsage(since)
+  async recordCodeChanges(commits: readonly TeamCodeChangeInput[]): Promise<void> {
+    return this.database.recordCodeChanges(commits)
   }
 
   async listGitEmailBindings(): Promise<readonly TeamGitEmailBinding[]> {
@@ -127,10 +120,6 @@ export class TeamService extends Service implements TeamServiceApi {
 
   async listCommitsByUser(userId: string, since: number): Promise<readonly TeamCodeChange[]> {
     return this.database.listCommitsByUser(userId, since)
-  }
-
-  async listModelUsageByUser(userId: string, since: number): Promise<readonly TeamModelUsageRow[]> {
-    return this.database.listModelUsageByUser(userId, since)
   }
 
   async listAnalyticsByUser(userId: string): Promise<readonly TeamSessionAnalytics[]> {
@@ -197,12 +186,18 @@ export class TeamService extends Service implements TeamServiceApi {
   async [Service.init](): Promise<void> {
     await this.database.connect()
     const stored = await this.database.loadAccounts()
-    if (stored.length === 0) {
-      for (const account of users as TeamAccount[]) await this.database.saveAccount(account)
-      this.users = new Map((users as TeamAccount[]).map(account => [account.id, { ...account }]))
-    } else {
-      this.users = new Map(stored.map(account => [account.id, account]))
+    // 首次播种或升级遗留明文：任何非哈希的已设置密码都先哈希再落库，
+    // 数据库与内存中的账号此后只保存哈希。种子账号不携带密码，
+    // 落库前统一补为空哨兵（未设置），由管理员激活后分配密码。
+    const accounts = stored.length === 0
+      ? (users as Omit<TeamAccount, 'password'>[]).map(account => ({ ...account, password: '' }))
+      : stored
+    for (const account of accounts) {
+      if (account.password.length === 0 || isPasswordHash(account.password)) continue
+      account.password = await hashPassword(account.password)
+      await this.database.saveAccount(account)
     }
+    this.users = new Map(accounts.map(account => [account.id, { ...account }]))
     this.ctx.effect(() => async () => this.database.close(), 'team-server.database')
   }
 }

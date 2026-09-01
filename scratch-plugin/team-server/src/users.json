@@ -3,21 +3,18 @@
     "id": "liu",
     "name": "刘工",
     "status": "active",
-    "role": "developer",
-    "password": "123456"
+    "role": "developer"
   },
   {
     "id": "zhang",
     "name": "张工",
     "status": "active",
-    "role": "developer",
-    "password": "123456"
+    "role": "developer"
   },
   {
     "id": "hahame",
     "name": "管理员",
     "status": "active",
-    "role": "admin",
-    "password": "a123456"
+    "role": "admin"
   }
 ]

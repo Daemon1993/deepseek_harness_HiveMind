@@ -20,7 +20,8 @@ export interface TeamUser {
 
 /** A user record exposed only through administrator-authorized operations. */
 export interface TeamAdminUser extends TeamUser {
-  password: string
+  /** Whether a password is set; the stored hash itself is never exposed. */
+  hasPassword: boolean
 }
 
 /** One structured, non-sensitive team-server audit record. */
@@ -135,8 +136,10 @@ export interface TeamCodeChangeInput {
 
 /** One persisted commit summary exposed to administrator analytics. */
 export interface TeamCodeChange {
-  userId: string
-  userName: string
+  /** Bound platform user when the commit's author email maps to one. */
+  userId?: string
+  /** Bound platform user's name, when resolved. */
+  userName?: string
   commitHash: string
   gitRemote?: string
   authorName?: string
@@ -167,29 +170,19 @@ export interface TeamProjectTrend {
 
 /** One author's commit aggregates within a project window. */
 export interface TeamProjectAuthor {
+  /** Platform user id when the author's emails are bound to a user. */
+  userId?: string
+  /** Platform user name when bound. */
+  userName?: string
+  /** Representative author email (one of the merged emails). */
   authorEmail: string
+  /** Display name: platform user name when bound, else Git author name. */
   authorName: string
+  /** All Git emails merged into this author, for filtering commit rows. */
+  emails: string[]
   commits: number
   insertions: number
   deletions: number
-}
-
-/** One model-usage record captured by the gateway from a forwarded response. */
-export interface TeamModelUsageInput {
-  requestId: string
-  model: string
-  inputTokens: number
-  outputTokens: number
-  costCny: number
-  latencyMs: number
-  status: number
-}
-
-/** One persisted model-usage row as served to administrators. */
-export interface TeamModelUsageRow extends TeamModelUsageInput {
-  userId: string
-  userName: string
-  createdAt: string
 }
 
 /** Public operations provided by the team platform service. */
@@ -207,9 +200,7 @@ export interface TeamServiceApi {
   clearSessionMarker(sessionId: string): Promise<void>
   deleteSyncedSession(sessionId: string): Promise<boolean>
   recordGitOps(userId: string, ops: readonly TeamGitOpInput[]): Promise<void>
-  recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void>
-  recordModelUsage(userId: string, usage: TeamModelUsageInput): Promise<void>
-  listModelUsage(since: number): Promise<readonly TeamModelUsageRow[]>
+  recordCodeChanges(commits: readonly TeamCodeChangeInput[]): Promise<void>
   listGitEmailBindings(): Promise<readonly TeamGitEmailBinding[]>
   bindGitEmail(userId: string, email: string): Promise<boolean>
   unbindGitEmail(email: string): Promise<boolean>
@@ -218,7 +209,6 @@ export interface TeamServiceApi {
   projectAuthorStats(gitRemote: string, since: number): Promise<readonly TeamProjectAuthor[]>
   projectChangedFiles(gitRemote: string, since: number): Promise<readonly string[]>
   listCommitsByUser(userId: string, since: number): Promise<readonly TeamCodeChange[]>
-  listModelUsageByUser(userId: string, since: number): Promise<readonly TeamModelUsageRow[]>
   listAnalyticsByUser(userId: string): Promise<readonly TeamSessionAnalytics[]>
   listAnalyticsByProject(gitRemote: string): Promise<readonly TeamSessionAnalytics[]>
   listCodeChanges(since: number): Promise<readonly TeamCodeChange[]>

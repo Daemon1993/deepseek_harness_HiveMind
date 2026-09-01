@@ -1,5 +1,6 @@
 import { Pool } from 'pg'
-import type { TeamAuditLogRow, TeamCodeChange, TeamCodeChangeInput, TeamGitEmailBinding, TeamLogRecord, TeamModelUsageInput, TeamModelUsageRow, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
+import { randomUUID } from 'node:crypto'
+import type { TeamAuditLogRow, TeamCodeChange, TeamCodeChangeInput, TeamGitEmailBinding, TeamLogRecord, TeamProjectAuthor, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
 import { readTeamConfig } from './config.ts'
 
 export type TeamAccount = TeamUser & { password: string }
@@ -17,7 +18,7 @@ type AccountRow = {
   name: string
   status: TeamUser['status']
   role: TeamRole
-  password: string
+  password_hash: string
 }
 
 type SyncedSessionRow = {
@@ -43,10 +44,21 @@ export class TeamDatabase {
         name TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'rejected', 'disabled')),
         role TEXT NOT NULL CHECK (role IN ('admin', 'developer', 'reviewer', 'user')),
-        password TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `)
+    // 旧部署的 password 列改名为 password_hash；存量明文由服务启动时哈希后回写。
+    await this.pool.query(`
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'team_users' AND column_name = 'password'
+        ) THEN
+          ALTER TABLE team_users RENAME COLUMN password TO password_hash;
+        END IF;
+      END $$;
     `)
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_audit_logs (
@@ -58,9 +70,12 @@ export class TeamDatabase {
         request_id TEXT,
         user_id TEXT,
         session_id TEXT,
+        message TEXT,
         details JSONB NOT NULL DEFAULT '{}'::jsonb
       )
     `)
+    // 已建表的部署缺少 message 列，读审计日志会整条查询失败。
+    await this.pool.query('ALTER TABLE team_audit_logs ADD COLUMN IF NOT EXISTS message TEXT')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_occurred_at_idx ON team_audit_logs (occurred_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_user_id_idx ON team_audit_logs (user_id, occurred_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_session_id_idx ON team_audit_logs (session_id, occurred_at DESC)')
@@ -103,7 +118,6 @@ export class TeamDatabase {
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_code_changes (
         id BIGSERIAL PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
         cwd TEXT,
         git_remote TEXT NOT NULL DEFAULT '',
         commit_hash TEXT,
@@ -122,24 +136,30 @@ export class TeamDatabase {
     await this.pool.query('CREATE UNIQUE INDEX IF NOT EXISTS team_code_changes_project_hash_idx ON team_code_changes (git_remote, commit_hash)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_author_idx ON team_code_changes (author_email, commit_time DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_cwd_idx ON team_code_changes (cwd, created_at DESC)')
-    await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_user_idx ON team_code_changes (user_id, created_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_project_idx ON team_code_changes (git_remote, commit_time DESC)')
+    // 归属改为作者邮箱：旧部署残留的 user_id 列不再使用，删列回收。
     await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS team_model_usage (
-        request_id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
-        model TEXT NOT NULL,
-        input_tokens INT NOT NULL,
-        output_tokens INT NOT NULL,
-        cost_cny NUMERIC(12, 6) NOT NULL DEFAULT 0,
-        latency_ms INT NOT NULL,
-        status INT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'team_code_changes' AND column_name = 'user_id'
+        ) THEN
+          ALTER TABLE team_code_changes DROP COLUMN user_id;
+        END IF;
+      END $$;
+    `)
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS team_projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        git_remote TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
-    await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_created_idx ON team_model_usage (created_at DESC)')
-    await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_user_idx ON team_model_usage (user_id, created_at DESC)')
-    await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_model_idx ON team_model_usage (model, created_at DESC)')
+    // 为 Commit 增加稳定 Project 实体关联；git_remote 仍保留作为 Git 原始信息。
+    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES team_projects(id) ON DELETE SET NULL')
+    await this.pool.query('ALTER TABLE team_session_analytics ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES team_projects(id) ON DELETE SET NULL')
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_git_emails (
         email TEXT PRIMARY KEY,
@@ -147,30 +167,73 @@ export class TeamDatabase {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
+    // 为既有 git_remote 建立 Project 并回填 project_id；幂等，可安全重复。
+    await this.backfillProjects()
   }
 
   async close(): Promise<void> {
     await this.pool?.end()
   }
 
+  /** Derive a display name for a project from its git remote. */
+  private deriveProjectName(gitRemote: string): string {
+    return gitRemote.replace(/[/\\]$/u, '').split(/[/\\:]/u).at(-1)?.replace(/\.git$/u, '') || gitRemote
+  }
+
+  /**
+   * Resolve the stable Project id for a git remote, creating the Project row on
+   * first sight. Empty git_remote yields no project (null).
+   */
+  async ensureProject(gitRemote: string): Promise<string | null> {
+    if (gitRemote === '') return null
+    const existing = await this.client().query<{ id: string }>('SELECT id FROM team_projects WHERE git_remote = $1', [gitRemote])
+    if (existing.rowCount === 1) return existing.rows[0]!.id
+    const id = randomUUID()
+    await this.client().query(
+      'INSERT INTO team_projects (id, name, git_remote) VALUES ($1, $2, $3) ON CONFLICT (git_remote) DO NOTHING',
+      [id, this.deriveProjectName(gitRemote), gitRemote],
+    )
+    const after = await this.client().query<{ id: string }>('SELECT id FROM team_projects WHERE git_remote = $1', [gitRemote])
+    return after.rowCount === 1 ? after.rows[0]!.id : null
+  }
+
+  /**
+   * Backfill Project rows and project_id for all git remotes already persisted
+   * in commits and session analytics. Runs once at startup; idempotent.
+   */
+  private async backfillProjects(): Promise<void> {
+    const remotes = await this.client().query<{ git_remote: string }>(`
+      SELECT DISTINCT git_remote FROM team_code_changes WHERE git_remote <> ''
+      UNION
+      SELECT DISTINCT git_remote FROM team_session_analytics WHERE git_remote <> ''
+    `)
+    for (const { git_remote } of remotes.rows) {
+      const projectId = await this.ensureProject(git_remote)
+      if (projectId === null) continue
+      await this.client().query('UPDATE team_code_changes SET project_id = $1 WHERE git_remote = $2', [projectId, git_remote])
+      await this.client().query('UPDATE team_session_analytics SET project_id = $1 WHERE git_remote = $2', [projectId, git_remote])
+    }
+  }
+
   async loadAccounts(): Promise<TeamAccount[]> {
-    const result = await this.client().query<AccountRow>('SELECT id, email, name, status, role, password FROM team_users ORDER BY created_at')
+    const result = await this.client().query<AccountRow>('SELECT id, email, name, status, role, password_hash FROM team_users ORDER BY created_at')
     return result.rows.map(row => {
-      const { email, ...account } = row
-      return email === null ? account : { ...account, email }
+      const { email, password_hash, ...account } = row
+      const base = { ...account, password: password_hash }
+      return email === null ? base : { ...base, email }
     })
   }
 
   async saveAccount(account: TeamAccount): Promise<void> {
     await this.client().query(
-      `INSERT INTO team_users (id, email, name, status, role, password)
+      `INSERT INTO team_users (id, email, name, status, role, password_hash)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (id) DO UPDATE SET
          email = EXCLUDED.email,
          name = EXCLUDED.name,
          status = EXCLUDED.status,
          role = EXCLUDED.role,
-         password = EXCLUDED.password,
+         password_hash = EXCLUDED.password_hash,
          updated_at = NOW()`,
       [account.id, account.email ?? null, account.name, account.status, account.role, account.password],
     )
@@ -183,8 +246,8 @@ export class TeamDatabase {
 
   async recordAuditLog(entry: TeamLogRecord): Promise<void> {
     await this.client().query(
-      `INSERT INTO team_audit_logs (level, event, source, request_id, user_id, session_id, details)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      `INSERT INTO team_audit_logs (level, event, source, request_id, user_id, session_id, message, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
       [
         entry.level,
         entry.event,
@@ -192,6 +255,7 @@ export class TeamDatabase {
         entry.requestId ?? null,
         entry.userId ?? null,
         entry.sessionId ?? null,
+        entry.message,
         JSON.stringify(entry.details ?? {}),
       ],
     )
@@ -300,10 +364,12 @@ export class TeamDatabase {
 
   /** Upsert the content-free analytics projection produced after a successful sync. */
   async saveSessionAnalytics(snapshot: TeamSessionAnalytics): Promise<void> {
+    const projectId = snapshot.gitRemote === undefined ? null : await this.ensureProject(snapshot.gitRemote)
     await this.client().query(
-      `INSERT INTO team_session_analytics (session_id, project_name, project_root, git_remote, title, last_active_at, metrics)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      `INSERT INTO team_session_analytics (session_id, project_id, project_name, project_root, git_remote, title, last_active_at, metrics)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
        ON CONFLICT (session_id) DO UPDATE SET
+         project_id = COALESCE(team_session_analytics.project_id, EXCLUDED.project_id),
          project_name = EXCLUDED.project_name,
          project_root = EXCLUDED.project_root,
          git_remote = EXCLUDED.git_remote,
@@ -311,7 +377,7 @@ export class TeamDatabase {
          last_active_at = EXCLUDED.last_active_at,
          metrics = EXCLUDED.metrics,
          updated_at = NOW()`,
-      [snapshot.sessionId, snapshot.projectName ?? null, snapshot.projectRoot ?? null, snapshot.gitRemote ?? null, snapshot.title, snapshot.lastActiveAt, JSON.stringify(snapshot.metrics)],
+      [snapshot.sessionId, projectId, snapshot.projectName ?? null, snapshot.projectRoot ?? null, snapshot.gitRemote ?? null, snapshot.title, snapshot.lastActiveAt, JSON.stringify(snapshot.metrics)],
     )
   }
 
@@ -342,12 +408,18 @@ export class TeamDatabase {
   }
 
   /** Record one batch of code-change summaries; (git_remote, commit_hash) is the idempotency key. */
-  async recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void> {
+  async recordCodeChanges(commits: readonly TeamCodeChangeInput[]): Promise<void> {
     if (commits.length === 0) return
+    // 按唯一 git_remote 解析稳定 Project 实体，为整批写入统一的 project_id。
+    const projectByRemote = new Map<string, string | null>()
+    for (const commit of commits) {
+      const remote = commit.gitRemote ?? ''
+      if (!projectByRemote.has(remote)) projectByRemote.set(remote, await this.ensureProject(remote))
+    }
     // 批量插入：一次网络往返写入整批，避免逐条 INSERT 跨网络延迟放大。
     await this.client().query(
       `INSERT INTO team_code_changes (
-         user_id, cwd, git_remote, commit_hash, author_name, author_email,
+         project_id, cwd, git_remote, commit_hash, author_name, author_email,
          subject, message, changed_files, files_changed, insertions, deletions, commit_time
        )
        SELECT * FROM unnest(
@@ -355,6 +427,7 @@ export class TeamDatabase {
          $7::text[], $8::text[], $9::jsonb[], $10::int[], $11::int[], $12::int[], $13::bigint[]
        )
        ON CONFLICT (git_remote, commit_hash) DO UPDATE SET
+         project_id = COALESCE(team_code_changes.project_id, EXCLUDED.project_id),
          cwd = COALESCE(team_code_changes.cwd, EXCLUDED.cwd),
          author_name = COALESCE(team_code_changes.author_name, EXCLUDED.author_name),
          author_email = COALESCE(team_code_changes.author_email, EXCLUDED.author_email),
@@ -363,7 +436,7 @@ export class TeamDatabase {
          changed_files = CASE WHEN team_code_changes.changed_files = '[]'::jsonb THEN EXCLUDED.changed_files ELSE team_code_changes.changed_files END,
          commit_time = COALESCE(team_code_changes.commit_time, EXCLUDED.commit_time)`,
       [
-        commits.map(() => userId),
+        commits.map(commit => projectByRemote.get(commit.gitRemote ?? '') ?? null),
         commits.map(commit => commit.cwd ?? null),
         commits.map(commit => commit.gitRemote ?? ''),
         commits.map(commit => commit.commitHash),
@@ -383,8 +456,8 @@ export class TeamDatabase {
   /** Read commit summaries in the requested time range, newest first. */
   async listCodeChanges(since: number): Promise<TeamCodeChange[]> {
     const result = await this.client().query<{
-      user_id: string
-      user_name: string
+      user_id: string | null
+      user_name: string | null
       commit_hash: string
       git_remote: string | null
       author_name: string | null
@@ -398,21 +471,21 @@ export class TeamDatabase {
       commit_time: string | null
       created_at: Date
     }>(
-      `SELECT changes.user_id, users.name AS user_name, changes.commit_hash,
-              NULLIF(changes.git_remote, '') AS git_remote,
+      `SELECT changes.commit_hash, NULLIF(changes.git_remote, '') AS git_remote,
               changes.author_name, changes.author_email, changes.subject,
               changes.message, changes.changed_files, changes.files_changed,
               changes.insertions, changes.deletions, changes.commit_time,
-              changes.created_at
+              changes.created_at, bindings.user_id, users.name AS user_name
        FROM team_code_changes AS changes
-       JOIN team_users AS users ON users.id = changes.user_id
+       LEFT JOIN team_git_emails AS bindings ON bindings.email = changes.author_email
+       LEFT JOIN team_users AS users ON users.id = bindings.user_id
        WHERE COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $1
        ORDER BY COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) DESC`,
       [since],
     )
     return result.rows.map(row => ({
-      userId: row.user_id,
-      userName: row.user_name,
+      ...(row.user_id === null ? {} : { userId: row.user_id }),
+      ...(row.user_name === null ? {} : { userName: row.user_name }),
       commitHash: row.commit_hash,
       ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }),
       ...(row.author_name === null ? {} : { authorName: row.author_name }),
@@ -430,8 +503,8 @@ export class TeamDatabase {
   /** One project's commit rows in the requested window, newest first. */
   async listCommitsByProject(gitRemote: string, since: number): Promise<TeamCodeChange[]> {
     const result = await this.client().query<{
-      user_id: string
-      user_name: string
+      user_id: string | null
+      user_name: string | null
       commit_hash: string
       author_name: string | null
       author_email: string | null
@@ -444,21 +517,22 @@ export class TeamDatabase {
       commit_time: string | null
       created_at: Date
     }>(
-      `SELECT changes.user_id, users.name AS user_name, changes.commit_hash,
+      `SELECT changes.commit_hash, NULLIF(changes.git_remote, '') AS git_remote,
               changes.author_name, changes.author_email, changes.subject,
               changes.message, changes.changed_files, changes.files_changed,
               changes.insertions, changes.deletions, changes.commit_time,
-              changes.created_at
+              changes.created_at, bindings.user_id, users.name AS user_name
        FROM team_code_changes AS changes
-       JOIN team_users AS users ON users.id = changes.user_id
+       LEFT JOIN team_git_emails AS bindings ON bindings.email = changes.author_email
+       LEFT JOIN team_users AS users ON users.id = bindings.user_id
        WHERE changes.git_remote = $1
          AND COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $2
        ORDER BY COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) DESC`,
       [gitRemote, since],
     )
     return result.rows.map(row => ({
-      userId: row.user_id,
-      userName: row.user_name,
+      ...(row.user_id === null ? {} : { userId: row.user_id }),
+      ...(row.user_name === null ? {} : { userName: row.user_name }),
       commitHash: row.commit_hash,
       ...(row.author_name === null ? {} : { authorName: row.author_name }),
       ...(row.author_email === null ? {} : { authorEmail: row.author_email }),
@@ -487,23 +561,44 @@ export class TeamDatabase {
     return result.rows.map(row => ({ day: row.day.toISOString().slice(0, 10), commits: Number(row.commits), insertions: Number(row.insertions), deletions: Number(row.deletions) }))
   }
 
-  /** Per-author commit aggregates for one project, most commits first. */
-  async projectAuthorStats(gitRemote: string, since: number): Promise<{ authorEmail: string; authorName: string; commits: number; insertions: number; deletions: number }[]> {
-    const result = await this.client().query<{ author_email: string | null; author_name: string | null; commits: string; insertions: string; deletions: string }>(
-      `SELECT changes.author_email, changes.author_name, count(*) AS commits,
+  /**
+   * Per-contributor commit aggregates for one project, most commits first.
+   * Git emails bound via team_git_emails are merged into their platform user;
+   * unbound authors stay as independent Git authors.
+   */
+  async projectAuthorStats(gitRemote: string, since: number): Promise<TeamProjectAuthor[]> {
+    const result = await this.client().query<{
+      user_id: string | null
+      user_name: string | null
+      author_email: string
+      author_name: string | null
+      emails: string[]
+      commits: string
+      insertions: string
+      deletions: string
+    }>(
+      `SELECT bindings.user_id, users.name AS user_name,
+              min(changes.author_email) AS author_email,
+              COALESCE(users.name, min(changes.author_name)) AS author_name,
+              array_agg(DISTINCT changes.author_email) AS emails,
+              count(*) AS commits,
               COALESCE(sum(changes.insertions), 0) AS insertions,
               COALESCE(sum(changes.deletions), 0) AS deletions
        FROM team_code_changes AS changes
+       LEFT JOIN team_git_emails AS bindings ON bindings.email = changes.author_email
+       LEFT JOIN team_users AS users ON users.id = bindings.user_id
        WHERE changes.git_remote = $1
          AND COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $2
          AND changes.author_email IS NOT NULL
-       GROUP BY changes.author_email, changes.author_name
+       GROUP BY COALESCE(bindings.user_id, changes.author_email), bindings.user_id, users.name
        ORDER BY commits DESC`,
       [gitRemote, since],
     )
     return result.rows.map(row => ({
-      authorEmail: row.author_email ?? 'unknown',
-      authorName: row.author_name ?? row.author_email ?? 'unknown',
+      ...(row.user_id === null ? {} : { userId: row.user_id, userName: row.user_name ?? row.user_id }),
+      authorEmail: row.author_email,
+      authorName: row.author_name ?? row.author_email,
+      emails: row.emails.filter(email => email !== null && email !== ''),
       commits: Number(row.commits),
       insertions: Number(row.insertions),
       deletions: Number(row.deletions),
@@ -544,14 +639,13 @@ export class TeamDatabase {
               changes.insertions, changes.deletions, changes.commit_time,
               changes.created_at
        FROM team_code_changes AS changes
-       WHERE changes.user_id = $1
+       WHERE changes.author_email IN (SELECT email FROM team_git_emails WHERE user_id = $1)
          AND COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $2
        ORDER BY COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) DESC`,
       [userId, since],
     )
     return result.rows.map(row => ({
       userId,
-      userName: '',
       commitHash: row.commit_hash,
       ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }),
       ...(row.author_name === null ? {} : { authorName: row.author_name }),
@@ -563,39 +657,6 @@ export class TeamDatabase {
       insertions: row.insertions ?? 0,
       deletions: row.deletions ?? 0,
       time: row.commit_time === null ? row.created_at.getTime() : Number(row.commit_time),
-    }))
-  }
-
-  /** One user's model-usage rows in the requested window, newest first. */
-  async listModelUsageByUser(userId: string, since: number): Promise<TeamModelUsageRow[]> {
-    const result = await this.client().query<{
-      request_id: string
-      model: string
-      input_tokens: number
-      output_tokens: number
-      cost_cny: string
-      latency_ms: number
-      status: number
-      created_at: Date
-    }>(
-      `SELECT usage.request_id, usage.model, usage.input_tokens, usage.output_tokens,
-              usage.cost_cny, usage.latency_ms, usage.status, usage.created_at
-       FROM team_model_usage AS usage
-       WHERE usage.user_id = $1 AND usage.created_at >= to_timestamp($2 / 1000.0)
-       ORDER BY usage.created_at DESC`,
-      [userId, since],
-    )
-    return result.rows.map(row => ({
-      userId,
-      userName: '',
-      requestId: row.request_id,
-      model: row.model,
-      inputTokens: row.input_tokens,
-      outputTokens: row.output_tokens,
-      costCny: Number(row.cost_cny),
-      latencyMs: row.latency_ms,
-      status: row.status,
-      createdAt: row.created_at.toISOString(),
     }))
   }
 
@@ -686,53 +747,6 @@ export class TeamDatabase {
       level: row.level,
       userId: row.user_id,
       message: row.message,
-    }))
-  }
-
-  /** Record one model-usage row captured by the gateway. */
-  async recordModelUsage(userId: string, usage: TeamModelUsageInput): Promise<void> {
-    await this.client().query(
-      `INSERT INTO team_model_usage (request_id, user_id, model, input_tokens, output_tokens, cost_cny, latency_ms, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (request_id) DO NOTHING`,
-      [usage.requestId, userId, usage.model, usage.inputTokens, usage.outputTokens, usage.costCny, usage.latencyMs, usage.status],
-    )
-  }
-
-  /** Read model-usage rows in the requested time range, newest first. */
-  async listModelUsage(since: number): Promise<TeamModelUsageRow[]> {
-    const result = await this.client().query<{
-      request_id: string
-      user_id: string
-      user_name: string
-      model: string
-      input_tokens: number
-      output_tokens: number
-      cost_cny: string
-      latency_ms: number
-      status: number
-      created_at: Date
-    }>(
-      `SELECT usage.request_id, usage.user_id, users.name AS user_name, usage.model,
-              usage.input_tokens, usage.output_tokens, usage.cost_cny,
-              usage.latency_ms, usage.status, usage.created_at
-       FROM team_model_usage AS usage
-       JOIN team_users AS users ON users.id = usage.user_id
-       WHERE usage.created_at >= to_timestamp($1 / 1000.0)
-       ORDER BY usage.created_at DESC`,
-      [since],
-    )
-    return result.rows.map(row => ({
-      userId: row.user_id,
-      userName: row.user_name,
-      requestId: row.request_id,
-      model: row.model,
-      inputTokens: row.input_tokens,
-      outputTokens: row.output_tokens,
-      costCny: Number(row.cost_cny),
-      latencyMs: row.latency_ms,
-      status: row.status,
-      createdAt: row.created_at.toISOString(),
     }))
   }
 

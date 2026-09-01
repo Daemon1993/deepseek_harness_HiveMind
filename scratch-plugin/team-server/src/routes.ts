@@ -6,10 +6,9 @@ import { SESSION_FORMAT_VERSION, type SessionHeader, type SessionId } from '@dee
 import type { TeamCodeChangeInput, TeamContext } from "./types.ts";
 import { AuthSessions } from "./auth.ts";
 import { writeTeamLog } from "./team-log.ts";
-import { analyzeSessionEvents, sessionTitle } from './session-metrics.ts'
+import { analyzeSessionDetail, analyzeSessionEvents, sessionTitle } from './session-metrics.ts'
 import { reconcileSessions } from './reconcile.ts'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { costOf, usageFromObject, usageFromSseText, type UsageTokens } from './model-usage.ts'
 import { classifyCommitType, topChangedDirectories } from './project-analytics.ts'
 import { readLimitedJson, RequestBodyTooLargeError } from './request-body.ts'
 import {
@@ -183,41 +182,14 @@ async function handleModelGateway(ctx: TeamContext, sessions: AuthSessions, req:
       if (value !== null) headers[name] = value
     }
     res.writeHead(upstream.status, headers)
-    // 透传响应体并顺路提取 usage：流式按 SSE 文本嗅探，非流式解析 JSON。
-    let usage: UsageTokens | undefined
+    // 透传响应体：流式按块透传，非流式一次写出；不做 usage 提取。
     if (stream && upstream.body !== null) {
-      let sseTail = ''
-      for await (const chunk of upstream.body) {
-        const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
-        sseTail = (sseTail + text).slice(-512 * 1024)
-        res.write(chunk)
-      }
-      usage = usageFromSseText(sseTail)
+      for await (const chunk of upstream.body) res.write(chunk)
     } else if (!stream) {
-      const responseBody = Buffer.from(await upstream.arrayBuffer())
-      res.write(responseBody)
-      try {
-        const parsed = JSON.parse(responseBody.toString('utf8')) as { usage?: Record<string, unknown> }
-        usage = usageFromObject(parsed.usage)
-      } catch { /* 非 JSON 响应（如网关错误页）：无 usage */ }
+      res.write(Buffer.from(await upstream.arrayBuffer()))
     }
     res.end()
     const latencyMs = Date.now() - startedAt
-    try {
-      if (model !== undefined) {
-        await ctx.team.recordModelUsage(userId, {
-          requestId,
-          model,
-          inputTokens: usage?.inputTokens ?? 0,
-          outputTokens: usage?.outputTokens ?? 0,
-          costCny: await costOf(model, usage?.inputTokens ?? 0, usage?.outputTokens ?? 0),
-          latencyMs,
-          status: upstream.status,
-        })
-      }
-    } catch (error) {
-      writeTeamLog({ level: 'warn', event: 'model.usage.record_failed', message: error instanceof Error ? error.message : String(error), requestId, userId, ...logModel })
-    }
     await ctx.team.audit({
       level: upstream.ok ? 'info' : 'warn',
       event: 'model.gateway',
@@ -225,7 +197,7 @@ async function handleModelGateway(ctx: TeamContext, sessions: AuthSessions, req:
       requestId,
       userId,
       ...logModel,
-      details: { status: upstream.status, durationMs: latencyMs, inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0 },
+      details: { status: upstream.status, durationMs: latencyMs },
     })
   } catch (error) {
     writeTeamLog({ level: 'error', event: 'model.gateway.failed', message: `Model gateway failed duration=${Date.now() - startedAt}ms request=${requestId}: ${String(error)}`, requestId, userId, ...logModel })
@@ -308,11 +280,7 @@ async function handleAdminUsers(ctx: TeamContext, sessions: AuthSessions, req: I
   const user = await authenticatedUser(ctx, sessions, req)
   if (user === undefined) { sendJson(res, 401, { message: '请先登录' }); return }
   const users = ctx.team.listAdminUsers()
-  sendJson(res, 200, {
-    users: user.role === 'admin'
-      ? users
-      : users.map(({ password: _password, ...account }) => account),
-  })
+  sendJson(res, 200, { users })
 }
 
 async function handleAdminSessions(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -337,7 +305,7 @@ async function listEnrichedSessionOwners(ctx: TeamContext): Promise<EnrichedSess
   const analytics = new Map((await ctx.team.listSessionAnalytics()).map(snapshot => [snapshot.sessionId, snapshot]))
   await Promise.all(owners.map(async (owner) => {
     const existing = analytics.get(owner.sessionId)
-    if ((existing?.metrics as { version?: number } | undefined)?.version === 1) return
+    if ((existing?.metrics as { version?: number } | undefined)?.version === 2) return
     try {
       const inspected = await ctx.sessionController.inspect(owner.sessionId, AbortSignal.timeout(5_000))
       const snapshot = {
@@ -373,7 +341,7 @@ async function listEnrichedSessionOwners(ctx: TeamContext): Promise<EnrichedSess
       ...(snapshot.projectRoot === undefined ? {} : { projectRoot: snapshot.projectRoot }),
       ...(snapshot.gitRemote === undefined ? {} : { gitRemote: snapshot.gitRemote }),
       updatedAt: snapshot.lastActiveAt,
-      blank: snapshot.metrics.timeline.length === 0,
+      blank: snapshot.metrics.stepCount === 0 && snapshot.metrics.userMessages === 0 && snapshot.metrics.toolCalls === 0,
     }
   })
 }
@@ -459,47 +427,6 @@ function projectName(gitRemote: string): string {
   return gitRemote.replace(/[/\\]$/, '').split(/[/\\:]/).at(-1)?.replace(/\.git$/, '') || gitRemote
 }
 
-async function handleAdminUsage(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
-  if (!await requireAdmin(ctx, sessions, req, res)) return
-  const days = requestedDays(req)
-  if (days === undefined) { sendJson(res, 400, { message: '统计范围只支持 1、7 或 30 天' }); return }
-  const rows = await ctx.team.listModelUsage(Date.now() - days * 24 * 60 * 60 * 1000)
-  const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number; costCny: number; failed: number; avgLatencyMs: number }>()
-  const users = new Map<string, { userId: string; userName: string; requests: number; totalTokens: number; costCny: number }>()
-  for (const row of rows) {
-    const model = models.get(row.model) ?? { model: row.model, requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costCny: 0, failed: 0, avgLatencyMs: 0 }
-    model.requests++
-    model.inputTokens += row.inputTokens
-    model.outputTokens += row.outputTokens
-    model.totalTokens += row.inputTokens + row.outputTokens
-    model.costCny += row.costCny
-    if (row.status >= 400) model.failed++
-    models.set(row.model, model)
-    const user = users.get(row.userId) ?? { userId: row.userId, userName: row.userName, requests: 0, totalTokens: 0, costCny: 0 }
-    user.requests++
-    user.totalTokens += row.inputTokens + row.outputTokens
-    user.costCny += row.costCny
-    users.set(row.userId, user)
-  }
-  sendJson(res, 200, {
-    rangeDays: days,
-    generatedAt: new Date().toISOString(),
-    summary: {
-      requests: rows.length,
-      totalTokens: rows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0),
-      inputTokens: rows.reduce((sum, row) => sum + row.inputTokens, 0),
-      outputTokens: rows.reduce((sum, row) => sum + row.outputTokens, 0),
-      costCny: rows.reduce((sum, row) => sum + row.costCny, 0),
-      failed: rows.filter(row => row.status >= 400).length,
-      avgLatencyMs: rows.length === 0 ? 0 : Math.round(rows.reduce((sum, row) => sum + row.latencyMs, 0) / rows.length),
-    },
-    models: [...models.values()].sort((a, b) => b.costCny - a.costCny),
-    users: [...users.values()].sort((a, b) => b.costCny - a.costCny),
-    recent: rows.slice(0, 200),
-  })
-}
-
 async function handleAdminGitEmails(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!await requireAdmin(ctx, sessions, req, res)) return
   if (req.method === 'GET') {
@@ -570,8 +497,9 @@ async function handleAdminProjectDetail(ctx: TeamContext, sessions: AuthSessions
     typeBuckets.set(type, (typeBuckets.get(type) ?? 0) + 1)
   }
   const activeDays = new Set(trend.map(item => item.day)).size
-  const authorEmails = new Map((await ctx.team.listGitEmailBindings()).map(binding => [binding.email, binding.userName]))
   const projectName = gitRemote.replace(/[/\\]$/u, '').split(/[/\\:]/u).at(-1)?.replace(/\.git$/u, '') || gitRemote
+  // 已绑定 Git Email 已归并到平台 User，未绑定作者保持独立；两者之和即活跃开发者数。
+  const activeDevelopers = authors.length
   sendJson(res, 200, {
     gitRemote,
     projectName,
@@ -579,7 +507,7 @@ async function handleAdminProjectDetail(ctx: TeamContext, sessions: AuthSessions
     generatedAt: new Date().toISOString(),
     summary: {
       commits: commits.length,
-      activeDevelopers: authors.length,
+      activeDevelopers,
       activeDays,
       insertions: commits.reduce((sum, commit) => sum + commit.insertions, 0),
       deletions: commits.reduce((sum, commit) => sum + commit.deletions, 0),
@@ -596,15 +524,14 @@ async function handleAdminProjectDetail(ctx: TeamContext, sessions: AuthSessions
     tools: [...tools.values()].sort((a, b) => b.calls - a.calls),
     trend,
     authors: authors.map(author => {
-      const normalizedEmail = author.authorEmail.toLowerCase()
-      // 每个作者最近 N 条提交（用于按提交人分类浏览）。
+      // 按已归并的全部 Git Email 匹配提交，保证绑定多邮箱的开发者的提交不丢失。
+      const emailSet = new Set(author.emails.map(email => email.toLowerCase()))
       const recentCommits = commits
-        .filter(commit => commit.authorEmail?.toLowerCase() === normalizedEmail || (commit.authorEmail === undefined && author.authorEmail === 'unknown'))
+        .filter(commit => commit.authorEmail !== undefined && emailSet.has(commit.authorEmail.toLowerCase()))
         .slice(0, 10)
         .map(commit => ({ ...commit, type: classifyCommitType(commit.subject) }))
       return {
         ...author,
-        ...(authorEmails.get(normalizedEmail) === undefined ? {} : { boundUserName: authorEmails.get(normalizedEmail) }),
         recentCommits,
       }
     }),
@@ -625,24 +552,14 @@ async function handleAdminUserDetail(ctx: TeamContext, sessions: AuthSessions, r
   const daysParam = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('days') ?? '30')
   const days = daysParam === 7 || daysParam === 30 || daysParam === 90 ? daysParam : 30
   const since = Date.now() - days * 24 * 60 * 60 * 1000
-  const [commits, usageRows, analytics] = await Promise.all([
+  const [commits, analytics] = await Promise.all([
     ctx.team.listCommitsByUser(userId, since),
-    ctx.team.listModelUsageByUser(userId, since),
     ctx.team.listAnalyticsByUser(userId),
   ])
   const projectCommits = new Map<string, number>()
   for (const commit of commits) {
     if (commit.gitRemote === undefined) continue
     projectCommits.set(commit.gitRemote, (projectCommits.get(commit.gitRemote) ?? 0) + 1)
-  }
-  const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; costCny: number }>()
-  for (const row of usageRows) {
-    const model = models.get(row.model) ?? { model: row.model, requests: 0, inputTokens: 0, outputTokens: 0, costCny: 0 }
-    model.requests++
-    model.inputTokens += row.inputTokens
-    model.outputTokens += row.outputTokens
-    model.costCny += row.costCny
-    models.set(row.model, model)
   }
   const analyticsWindows = analytics.filter(snapshot => snapshot.lastActiveAt >= since)
   const sessionProjects = new Set(analytics.flatMap(snapshot => snapshot.gitRemote === undefined ? [] : [snapshot.gitRemote]))
@@ -690,9 +607,6 @@ async function handleAdminUserDetail(ctx: TeamContext, sessions: AuthSessions, r
       toolFailures,
       toolSuccessRate: toolCalls === 0 ? 0 : Math.round((toolCalls - toolFailures) / toolCalls * 1000) / 10,
       avgTurns: analyticsWindows.length === 0 ? 0 : Math.round(turnCount / analyticsWindows.length * 10) / 10,
-      modelRequests: usageRows.length,
-      totalTokens: usageRows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0),
-      costCny: usageRows.reduce((sum, row) => sum + row.costCny, 0),
       lastActiveAt: Math.max(commits[0]?.time ?? 0, analyticsWindows[0]?.lastActiveAt ?? 0),
     },
     projects: [...projectCommits.entries()]
@@ -709,7 +623,6 @@ async function handleAdminUserDetail(ctx: TeamContext, sessions: AuthSessions, r
       .map(([type, count]) => ({ type, count }))
       .sort((a, b) => b.count - a.count),
     commitTrend: [...commitTrend.values()].sort((a, b) => a.day.localeCompare(b.day)),
-    models: [...models.values()].sort((a, b) => b.costCny - a.costCny),
     commits: commits.slice(0, 100).map(commit => ({ ...commit, type: classifyCommitType(commit.subject) })),
     recentSessions: analyticsWindows.slice(0, 50).map(snapshot => ({
       sessionId: snapshot.sessionId,
@@ -757,17 +670,16 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
   if (days === undefined) { sendJson(res, 400, { message: '统计范围只支持 1、7 或 30 天' }); return }
   const owners = await listEnrichedSessionOwners(ctx)
   const threshold = Date.now() - days * 24 * 60 * 60 * 1000
-  const [inspected, codeChanges, modelUsage] = await Promise.all([
+  const [inspected, codeChanges] = await Promise.all([
     inspectOwnedSessions(ctx, owners),
     ctx.team.listCodeChanges(threshold),
-    ctx.team.listModelUsage(threshold),
   ])
 
   const users = new Map<string, UserAggregate>()
   const directories = new Map<string, ProjectAggregate>()
   const tools = new Map<string, { name: string; calls: number; failures: number; users: Set<string> }>()
   const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }>()
-  const trends = new Map<string, { date: string; sessions: number; activeUsers: Set<string>; toolCalls: number; modelRequests: number; totalTokens: number }>()
+  const trends = new Map<string, { date: string; sessions: number; activeUsers: Set<string>; toolCalls: number; modelRequests: number; totalTokens: number; commits: number }>()
 
   let totalSessions = 0, totalUserMessages = 0, totalAssistantMessages = 0, totalToolCalls = 0, totalToolFailures = 0
   let totalModelRequests = 0, totalInputTokens = 0, totalOutputTokens = 0, totalTokens = 0, totalActiveMs = 0, totalDurationMs = 0, totalErrors = 0
@@ -826,7 +738,7 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
     addModels(models, metrics.models)
 
     const date = new Date(metrics.lastTime).toISOString().slice(0, 10)
-    const trend = trends.get(date) ?? { date, sessions: 0, activeUsers: new Set(), toolCalls: 0, modelRequests: 0, totalTokens: 0 }
+    const trend = trends.get(date) ?? { date, sessions: 0, activeUsers: new Set(), toolCalls: 0, modelRequests: 0, totalTokens: 0, commits: 0 }
     trend.sessions++; trend.activeUsers.add(owner.userId)
     trend.toolCalls += metrics.toolCalls; trend.modelRequests += metrics.models.reduce((s, m) => s + m.requests, 0)
     trend.totalTokens += metrics.models.reduce((s, m) => s + m.totalTokens, 0)
@@ -841,18 +753,26 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
   }
 
   for (const commit of codeChanges) {
-    const user = users.get(commit.userId) ?? {
-      userId: commit.userId, userName: commit.userName, sessions: 0, projects: new Set(),
-      messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0,
-      durationMs: 0, errors: 0, lastActiveAt: 0, models: new Map(), tools: new Map(),
-      commits: [] as AggregateCommit[], insertions: 0, deletions: 0, lastCommitAt: 0,
+    // 提交计入按日研发活动趋势（与 Session 趋势同键）。
+    const date = new Date(commit.time).toISOString().slice(0, 10)
+    const trend = trends.get(date) ?? { date, sessions: 0, activeUsers: new Set(), toolCalls: 0, modelRequests: 0, totalTokens: 0, commits: 0 }
+    trend.commits++
+    trends.set(date, trend)
+    // 归属按作者邮箱解析到平台用户；未绑定邮箱的提交不计入任一用户，但计入项目提交统计。
+    if (commit.userId !== undefined) {
+      const user = users.get(commit.userId) ?? {
+        userId: commit.userId, userName: commit.userName ?? '', sessions: 0, projects: new Set(),
+        messages: 0, toolCalls: 0, toolFailures: 0, modelRequests: 0, totalTokens: 0,
+        durationMs: 0, errors: 0, lastActiveAt: 0, models: new Map(), tools: new Map(),
+        commits: [] as AggregateCommit[], insertions: 0, deletions: 0, lastCommitAt: 0,
+      }
+      user.commits.push(commit)
+      user.insertions += commit.insertions
+      user.deletions += commit.deletions
+      user.lastCommitAt = Math.max(user.lastCommitAt, commit.time)
+      if (commit.gitRemote !== undefined) user.projects.add(commit.gitRemote)
+      users.set(commit.userId, user)
     }
-    user.commits.push(commit)
-    user.insertions += commit.insertions
-    user.deletions += commit.deletions
-    user.lastCommitAt = Math.max(user.lastCommitAt, commit.time)
-    if (commit.gitRemote !== undefined) user.projects.add(commit.gitRemote)
-    users.set(commit.userId, user)
 
     if (commit.gitRemote === undefined) continue
     const directory = directories.get(commit.gitRemote) ?? {
@@ -861,7 +781,7 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
       modelRequests: 0, totalTokens: 0, durationMs: 0, errors: 0, lastActiveAt: 0,
       models: new Map(), tools: new Map(), commits: [] as AggregateCommit[], insertions: 0, deletions: 0, lastCommitAt: 0,
     }
-    directory.users.set(commit.userId, commit.userName)
+    if (commit.userId !== undefined && commit.userName !== undefined) directory.users.set(commit.userId, commit.userName)
     directory.commits.push(commit)
     directory.insertions += commit.insertions
     directory.deletions += commit.deletions
@@ -884,9 +804,6 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
       toolFailureRate: totalToolCalls === 0 ? 0 : Math.round(totalToolFailures / totalToolCalls * 1000) / 10,
       modelRequests: totalModelRequests,
       inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens,
-      gatewayRequests: modelUsage.length,
-      gatewayTokens: modelUsage.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0),
-      costCny: modelUsage.reduce((sum, row) => sum + row.costCny, 0),
       activeDurationMs: totalActiveMs, durationMs: totalDurationMs, errors: totalErrors,
       commits: codeChanges.length,
       insertions: codeChanges.reduce((sum, commit) => sum + commit.insertions, 0),
@@ -922,7 +839,7 @@ async function handleAdminSessionTimeline(ctx: TeamContext, sessions: AuthSessio
   if (owner === undefined) { sendJson(res, 404, { message: '未找到会话归属记录' }); return }
   try {
     const inspected = await ctx.sessionController.inspect(sessionId, AbortSignal.timeout(5_000))
-    const metrics = analyzeSessionEvents(inspected.events)
+    const metrics = analyzeSessionDetail(inspected.events)
     const { projectRoot: _projectRoot, ...publicOwner } = owner
     sendJson(res, 200, { session: publicOwner, metrics, timeline: metrics.timeline })
   } catch {
@@ -1113,7 +1030,7 @@ async function handleGitChanges(ctx: TeamContext, sessions: AuthSessions, req: I
     sendJson(res, 400, { message: '无效的代码变更记录' }); return
   }
   try {
-    await ctx.team.recordCodeChanges(userId, input.commits as TeamCodeChangeInput[])
+    await ctx.team.recordCodeChanges(input.commits as TeamCodeChangeInput[])
   } catch (error) {
     writeTeamLog({ level: 'error', event: 'git.changes.record_failed', message: error instanceof Error ? error.message : String(error), userId })
     await ctx.team.audit({ level: 'error', event: 'git.sync', message: 'Git 提交入库失败', userId, details: { error: error instanceof Error ? error.message.slice(0, 300) : String(error) } }).catch(() => undefined)
@@ -1480,7 +1397,6 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync-status', handler: (req, res) => handleAdminSyncStatus(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync/reconcile', handler: (req, res) => handleAdminSyncReconcile(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/overview', handler: (req, res) => handleAdminOverview(ctx, sessions, req, res) }),
-  ctx.webServer.register({ kind: 'exact', path: '/team/admin/usage', handler: (req, res) => handleAdminUsage(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/git-sync-log', handler: (req, res) => handleAdminGitSyncLog(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/git-emails', handler: (req, res) => handleAdminGitEmails(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/projects', handler: (req, res) => handleAdminProjectDetail(ctx, sessions, req, res) }),

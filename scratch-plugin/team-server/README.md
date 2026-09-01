@@ -9,10 +9,10 @@ See the [repository README](../../README.md) for the complete platform descripti
 ## Responsibilities
 
 - Authentication: PostgreSQL accounts plus Redis-backed Cookie, Bearer, and SSO-ticket sessions
-- Model gateway: raw forwarding through `/team/api/model/chat/completions` and `/team/api/model/files*` with the Server credential; streaming responses are sniffed for `usage` and each request is priced from a static model table into `team_model_usage`
-- Session replicas: DSH-native artifacts plus a PostgreSQL ownership index, complete-byte validation, and transactional publication
-- Git commits: `/team/api/git/changes` stores author identity, subject, full message, changed-file paths, and line stats; the idempotency key is `(git_remote, commit_hash)`; administrators bind Git emails to platform users
-- Administration console: `/team/admin` has four sections — Overview (team pulse, gateway usage/cost, Agent Sessions, Git sync log), Users, Projects (trend, authors, hot directories, commit-type buckets), and Accounts (roles, Git-email bindings, Session sync and reconcile)
+- Model gateway: raw forwarding through `/team/api/model/chat/completions` and `/team/api/model/files*` with the Server credential; responses are passed through without extracting usage
+- Session replicas: DSH-native artifacts plus a PostgreSQL ownership index, complete-byte validation, and transactional publication; a lightweight aggregate-only analytics projection is persisted per session (event-level detail stays in the raw Session)
+- Git commits: `/team/api/git/changes` stores author identity, subject, full message, changed-file paths, and line stats; the idempotency key is `(git_remote, commit_hash)`; administrators bind Git emails to platform users, and commits are grouped into a stable `team_projects` entity via `project_id`
+- Administration console: `/team/admin` — Overview (research-value KPI, recent development summary, commit/Session/developer trend, member & project research activity, recent AI collaboration), Users, Projects (trend, merged authors, hot directories, commit-type buckets), and Accounts (roles, Git-email bindings, Session sync and reconcile)
 - Root routing: `/` redirects to administration; only an administrator can reach `/team/workspace`
 
 ## Build and package
