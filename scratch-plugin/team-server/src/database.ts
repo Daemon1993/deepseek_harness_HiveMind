@@ -35,11 +35,7 @@ export class TeamDatabase {
 
   async connect(): Promise<void> {
     this.pool = new Pool({ connectionString: await readTeamConfig('DB_URL') })
-    // 开发阶段：不做增量迁移，启动即按最新结构重建全部 team_* 表（含清理旧表残留）。
-    // 需要保留数据时删除本段，保留下方 CREATE TABLE IF NOT EXISTS。
-    await this.pool.query(`DROP TABLE IF EXISTS
-      team_model_usage, team_git_emails, team_audit_logs, team_git_ops,
-      team_code_changes, team_session_analytics, team_session_log, team_users`)
+    // 建表幂等：旧表残留需在外部一次性清理，connect 不做破坏性操作。
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_users (
         id TEXT PRIMARY KEY,
