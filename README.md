@@ -2,7 +2,7 @@
 
 > 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) **插件系统**构建。
 
-每个员工在本地跑自己的 DSH；中央服务器负责认证、代理模型流量、归档 Session，并采集已导入仓库的 Git 提交。管理后台按用户和项目展示 AI 用量、估算成本与代码交付，两类数据并排查看，不把某条 commit 归给某个 Session。
+每个员工在本地跑自己的 DSH；中央服务器负责认证、代理模型流量、归档 Session，并采集已导入仓库的 Git 提交。
 
 ## 构建在 DSH 插件系统之上
 
