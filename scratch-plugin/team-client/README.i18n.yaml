@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write scratch-plugin/team-client/README.md
-README.md: 0bce10025cd381d248e4458e9cb3f94167329f74
-README.zh.md: 1cdbdf19f51327f3def8b96c6d11bca198424055
+README.md: 17673728374333847cb32ae0703441eb7d9aa91c
+README.zh.md: 738692f4ea4b1eb6cafeb351bc87ef557ea70681
