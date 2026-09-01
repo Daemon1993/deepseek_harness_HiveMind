@@ -219,13 +219,13 @@ function AdminRoot() {
     : section === 'projects'
       ? { title: '项目数据', description: '按 Git 远程仓库查看成员参与、会话产出、Token 与运行异常' }
     : section === 'accounts'
-      ? { title: '账号与权限', description: '统一管理账号申请、用户状态和角色权限' }
+      ? { title: '账号与权限', description: '统一管理账号申请、用户状态、角色权限与 Git 邮箱映射' }
     : section === 'sync'
       ? { title: '同步状态', description: '查看每位用户的 Session 同步进度与健康情况' }
       : section === 'sessions'
         ? { title: '会话', description: '按用户与项目查看同步的 Session，并按需打开分析详情' }
         : { title: '账号与权限', description: '统一管理账号申请、用户状态和角色权限' }
-  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">AI</div><div><Typography.Text strong>TEAM PLATFORM</Typography.Text><Typography.Text type="secondary" className="blockText">管理控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={[...(canEdit ? [{ key: 'dashboard', label: '总览' }, { key: 'usage', label: 'AI 用量' }, { key: 'users', label: '用户' }, { key: 'projects', label: '项目' }, { key: 'sessions', label: '会话' }] : []), { key: 'accounts', label: '账号与权限' }, ...(canEdit ? [{ key: 'sync', label: '同步状态' }] : [])]} /><div className="siderUser"><Avatar>{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardPanel onOpenSession={setDetail} /> : section === 'usage' ? <UsagePanel /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : section === 'sessions' ? <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'accounts' ? <AccountsPanel users={users} loading={loading} columns={columns} /> : <SyncStatusPanel />}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
+  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">AI</div><div><Typography.Text strong>TEAM PLATFORM</Typography.Text><Typography.Text type="secondary" className="blockText">管理控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={[...(canEdit ? [{ key: 'dashboard', label: '总览' }, { key: 'usage', label: 'AI 用量' }, { key: 'users', label: '用户' }, { key: 'projects', label: '项目' }, { key: 'sessions', label: '会话' }] : []), { key: 'accounts', label: '账号与权限' }, ...(canEdit ? [{ key: 'sync', label: '同步状态' }] : [])]} /><div className="siderUser"><Avatar>{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardPanel onOpenSession={setDetail} /> : section === 'usage' ? <UsagePanel /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : section === 'sessions' ? <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'accounts' ? <><AccountsPanel users={users} loading={loading} columns={columns} /><GitEmailsPanel /></> : <SyncStatusPanel />}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
 }
 
 /** 会话详情抽屉：完整指标 + 分组时间线 + 工具耗时。 */
@@ -673,6 +673,72 @@ function SyncStatusPanel() {
 
 function AccountsPanel({ users, loading, columns }: { users: User[]; loading: boolean; columns: ColumnsType<User> }) {
   return <><Row gutter={16} className="stats"><Col span={8}><Card><Statistic title="全部账号" value={users.length} /></Card></Col><Col span={8}><Card><Statistic title="待审核申请" value={users.filter(user => user.status === 'pending').length} valueStyle={{ color: '#d48806' }} /></Card></Col><Col span={8}><Card><Statistic title="已激活账号" value={users.filter(user => user.status === 'active').length} valueStyle={{ color: '#389e0d' }} /></Card></Col></Row><Card className="tableCard"><Table rowKey="id" columns={columns} dataSource={users} loading={loading} scroll={{ x: 1100 }} pagination={{ pageSize: 10, showSizeChanger: false }} rowClassName={user => user.status === 'pending' ? 'pendingRow' : ''} /></Card></>
+}
+
+type GitEmailBinding = { email: string; userId: string; userName: string }
+
+/** Git 邮箱 → 平台用户映射：用于 Commit 作者归属（Git 作者而非上传者）。 */
+function GitEmailsPanel() {
+  const [bindings, setBindings] = useState<GitEmailBinding[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [email, setEmail] = useState('')
+  const [userId, setUserId] = useState<string>()
+  const [saving, setSaving] = useState(false)
+  const [toast, contextHolder] = message.useMessage()
+  const load = async (): Promise<void> => {
+    setLoading(true); setError('')
+    try {
+      const [bindingResponse, userResponse] = await Promise.all([fetch('/team/admin/git-emails'), fetch('/team/admin/users')])
+      const bindingData = await bindingResponse.json() as { bindings?: GitEmailBinding[]; message?: string }
+      const userData = await userResponse.json() as { users?: User[]; message?: string }
+      if (!bindingResponse.ok || bindingData.bindings === undefined) throw new Error(bindingData.message ?? '加载 Git 映射失败')
+      if (!userResponse.ok || userData.users === undefined) throw new Error(userData.message ?? '加载用户失败')
+      setBindings(bindingData.bindings)
+      setUsers(userData.users.filter(user => user.status === 'active'))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '加载失败')
+    } finally { setLoading(false) }
+  }
+  useEffect(() => { void load() }, [])
+  const bind = async (): Promise<void> => {
+    const target = email.trim().toLowerCase()
+    if (target === '' || userId === undefined) return
+    setSaving(true)
+    try {
+      const response = await fetch('/team/admin/git-emails', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: target, userId }) })
+      const body = await response.json() as { ok?: boolean; message?: string }
+      if (!response.ok || body.ok !== true) throw new Error(body.message ?? '绑定失败')
+      setEmail(''); setUserId(undefined)
+      void toast.success('绑定成功'); await load()
+    } catch (reason) {
+      void toast.error(reason instanceof Error ? reason.message : '绑定失败')
+    } finally { setSaving(false) }
+  }
+  const unbind = async (binding: GitEmailBinding): Promise<void> => {
+    try {
+      const response = await fetch(`/team/admin/git-emails/${encodeURIComponent(binding.email)}`, { method: 'DELETE' })
+      if (!response.ok) throw new Error('解绑失败')
+      void toast.success('已解绑'); await load()
+    } catch (reason) {
+      void toast.error(reason instanceof Error ? reason.message : '解绑失败')
+    }
+  }
+  const columns: ColumnsType<GitEmailBinding> = [
+    { title: 'Git 邮箱', dataIndex: 'email', render: value => <Typography.Text code>{value}</Typography.Text> },
+    { title: '平台用户', render: (_, binding) => <Space><Avatar shape="square" size="small">{binding.userName.slice(0, 1)}</Avatar><Typography.Text strong>{binding.userName}</Typography.Text><Typography.Text type="secondary">{binding.userId}</Typography.Text></Space> },
+    { title: '操作', width: 100, render: (_, binding) => <Button type="link" danger onClick={() => void unbind(binding)}>解绑</Button> },
+  ]
+  return <>{contextHolder}<Card className="tableCard" title="Git 邮箱映射" extra={<Typography.Text type="secondary">Commit 作者邮箱 → 平台用户（作者归属）</Typography.Text>}>
+    {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} style={{ marginBottom: 12 }} />}
+    <Space style={{ marginBottom: 16 }} wrap>
+      <Input placeholder="Git 作者邮箱（如 liu@corp.com）" value={email} onChange={event => setEmail(event.target.value)} style={{ width: 260 }} />
+      <Select placeholder="绑定到平台用户" value={userId} onChange={setUserId} style={{ width: 200 }} options={users.map(user => ({ value: user.id, label: `${user.name}（${user.id}）` }))} showSearch optionFilterProp="label" />
+      <Button type="primary" loading={saving} disabled={email.trim() === '' || userId === undefined} onClick={() => void bind()}>绑定</Button>
+    </Space>
+    <Table rowKey="email" loading={loading} size="middle" columns={columns} dataSource={bindings} pagination={false} locale={{ emptyText: <Empty description="暂无 Git 邮箱映射；后台可手动绑定作者归属" /> }} />
+  </Card></>
 }
 
 function SessionOwnershipPanel({ sessions, loading, onOpenSession }: { sessions: SessionOwner[]; loading: boolean; onOpenSession: (d: SessionDetail) => void }) {

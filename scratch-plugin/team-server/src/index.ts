@@ -1,5 +1,5 @@
 import { Service } from "@deepseek-ai/cordis";
-import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChangeInput, TeamContext, TeamGitOpInput, TeamModelUsageInput, TeamModelUsageRow, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
+import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChangeInput, TeamContext, TeamGitEmailBinding, TeamGitOpInput, TeamModelUsageInput, TeamModelUsageRow, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
 
 import users from "./users.json" with { type: "json" };
 
@@ -95,6 +95,18 @@ export class TeamService extends Service implements TeamServiceApi {
 
   async listModelUsage(since: number): Promise<readonly TeamModelUsageRow[]> {
     return this.database.listModelUsage(since)
+  }
+
+  async listGitEmailBindings(): Promise<readonly TeamGitEmailBinding[]> {
+    return this.database.listGitEmailBindings()
+  }
+
+  async bindGitEmail(userId: string, email: string): Promise<boolean> {
+    return this.database.bindGitEmail(userId, email)
+  }
+
+  async unbindGitEmail(email: string): Promise<boolean> {
+    return this.database.unbindGitEmail(email)
   }
 
   async listCodeChanges(since: number) {
