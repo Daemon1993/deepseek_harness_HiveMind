@@ -66,20 +66,24 @@ type ProjectDetailCommit = { userId: string; userName: string; commitHash: strin
 type ProjectDetailRef = { gitRemote: string; projectName?: string }
 type ProjectDetail = {
   gitRemote: string; projectName: string; rangeDays: number; generatedAt: string
-  summary: { commits: number; activeDevelopers: number; activeDays: number; insertions: number; deletions: number; lastCommitAt: number; topChangedFiles: number }
+  summary: { commits: number; activeDevelopers: number; activeDays: number; insertions: number; deletions: number; lastCommitAt: number; topChangedFiles: number; sessions: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; lastSessionAt: number }
   trend: { day: string; commits: number; insertions: number; deletions: number }[]
   authors: { authorEmail: string; authorName: string; commits: number; insertions: number; deletions: number; boundUserName?: string }[]
   commitTypes: { type: string; count: number }[]
   hotDirectories: { directory: string; count: number }[]
+  models: { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }[]
+  tools: { name: string; calls: number; failures: number }[]
   commits: ProjectDetailCommit[]
 }
 
 // ── 用户详情类型（/team/admin/user-detail/:userId）────────────
 type UserDetail = {
-  userId: string; userName: string; rangeDays: number; generatedAt: string
-  summary: { commits: number; insertions: number; deletions: number; activeDays: number; activeProjects: number; sessions: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; costCny: number; lastActiveAt: number }
-  projects: { gitRemote: string; projectName: string; commits: number; hasSessions: boolean }[]
+  userId: string; userName: string; role: string; status: string; rangeDays: number; generatedAt: string
+  summary: { commits: number; insertions: number; deletions: number; activeDays: number; activeProjects: number; sessions: number; toolCalls: number; toolFailures: number; toolSuccessRate: number; avgTurns: number; modelRequests: number; totalTokens: number; costCny: number; lastActiveAt: number }
+  projects: { gitRemote: string; projectName: string; commits: number; hasSessions: boolean; sessions: number; lastActiveAt: number }[]
   models: { model: string; requests: number; inputTokens: number; outputTokens: number; costCny: number }[]
+  commitTypes: { type: string; count: number }[]
+  commitTrend: { day: string; commits: number; insertions: number; deletions: number }[]
   commits: ProjectDetailCommit[]
   recentSessions: { sessionId: string; title: string; lastActiveAt: number; toolCalls: number; toolFailures: number; gitRemote?: string }[]
 }
@@ -592,9 +596,23 @@ function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | u
     { title: '增删', width: 120, render: (_, commit) => <span><Typography.Text type="success">+{commit.insertions}</Typography.Text> <Typography.Text type="danger">-{commit.deletions}</Typography.Text></span> },
     { title: '时间', width: 170, dataIndex: 'time', render: value => new Date(value).toLocaleString() },
   ]
+  const sessionModelColumns: ColumnsType<ProjectDetail['models'][number]> = [
+    { title: '模型', dataIndex: 'model', ellipsis: true },
+    { title: '请求', dataIndex: 'requests', width: 80 },
+    { title: '输入 Token', dataIndex: 'inputTokens', width: 100, render: fmtNum },
+    { title: '输出 Token', dataIndex: 'outputTokens', width: 100, render: fmtNum },
+    { title: '总 Token', dataIndex: 'totalTokens', width: 100, render: fmtNum },
+  ]
+  const daysSinceLast = (s?.lastCommitAt ?? 0) === 0 ? undefined : Math.floor((Date.now() - s!.lastCommitAt!) / 86400000)
+  const lastActivity = Math.max(s?.lastCommitAt ?? 0, s?.lastSessionAt ?? 0)
   return <Drawer width={Math.min(1180, window.innerWidth)} open={detail !== undefined} onClose={onClose} className="trajectoryDrawer" title={detail === undefined ? '' : <span>{data?.projectName ?? detail.projectName ?? detail.gitRemote} <Typography.Text type="secondary">项目详情</Typography.Text></span>} extra={<Segmented value={days} onChange={value => setDays(value as 7 | 30 | 90)} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />}>
     {detail === undefined ? null : <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
+      <Space wrap size={6} style={{ marginTop: -4 }}>
+        <Tag color={daysSinceLast !== undefined && daysSinceLast <= 7 ? 'green' : daysSinceLast !== undefined && daysSinceLast <= 30 ? 'blue' : 'default'}>{daysSinceLast === undefined ? '暂无提交' : `${daysSinceLast} 天前有提交`}</Tag>
+        {(s?.sessions ?? 0) > 0 && <Tag color="purple">{(s?.modelRequests ?? 0)} 次模型请求</Tag>}
+        <Tag>{fmtNum(s?.totalTokens ?? 0)} Token</Tag>
+      </Space>
       <Row gutter={[12, 12]} className="trajectoryMetrics" style={{ borderRadius: 14 }}>
         <div><span>提交数</span><strong>{s?.commits ?? 0}</strong><small>近 {days} 天</small></div>
         <div><span>活跃开发者</span><strong>{s?.activeDevelopers ?? 0}</strong><small>按 Git 作者</small></div>
@@ -602,10 +620,27 @@ function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | u
         <div><span>代码增删</span><strong>+{s?.insertions ?? 0} / -{s?.deletions ?? 0}</strong><small>近 {days} 天</small></div>
         <div><span>最后提交</span><strong>{(s?.lastCommitAt ?? 0) === 0 ? '—' : new Date(s?.lastCommitAt ?? 0).toLocaleDateString()}</strong><small>{s === undefined ? '' : `${(s.topChangedFiles ?? 0)} 个变更文件`}</small></div>
       </Row>
-      <Card size="small" title="提交趋势">{loading ? <Card loading /> : data?.trend.length === 0 ? <Empty description="该时间段内没有提交" /> : <div className="chart-trend" style={{ height: 130 }}>{data?.trend.map(item => <div key={item.day} className="trendGroup"><div className="trendBars"><div className={item.commits === 0 ? 'bar tool empty' : 'bar tool'} style={{ height: `${Math.max(3, Math.round(item.commits / trendMax * 100))}%` }}><span className="v">{item.commits}</span></div></div><span className="d">{item.day.slice(5)}</span></div>)}</div>}</Card>
+      <Row gutter={[12, 12]} className="trajectoryMetrics" style={{ borderRadius: 14 }}>
+        <div><span>Agent 会话</span><strong>{s?.sessions ?? 0}</strong><small>项目内会话</small></div>
+        <div><span>工具调用</span><strong>{s?.toolCalls ?? 0}</strong><small>{s === undefined || s.toolFailures === 0 ? '全部成功' : `${s.toolFailures} 次失败`}</small></div>
+        <div><span>模型请求</span><strong>{s?.modelRequests ?? 0}</strong><small>会话内统计</small></div>
+        <div><span>Token</span><strong>{fmtNum(s?.totalTokens ?? 0)}</strong><small>会话内消耗</small></div>
+        <div><span>最近活动</span><strong>{lastActivity === 0 ? '—' : new Date(lastActivity).toLocaleDateString()}</strong><small>提交或会话</small></div>
+      </Row>
       <Row gutter={[12, 12]}>
-        <Col xs={24} xl={12}><Card size="small" title="作者分布"><Table rowKey="authorEmail" size="small" columns={authorColumns} dataSource={data?.authors ?? []} pagination={false} locale={{ emptyText: '暂无作者数据' }} /></Card></Col>
+        <Col xs={24} xl={12}><Card size="small" title="提交趋势">{loading ? <Card loading /> : data?.trend.length === 0 ? <Empty description="该时间段内没有提交" /> : <div className="chart-trend" style={{ height: 130 }}>{data?.trend.map(item => <div key={item.day} className="trendGroup"><div className="trendBars"><div className={item.commits === 0 ? 'bar tool empty' : 'bar tool'} style={{ height: `${Math.max(3, Math.round(item.commits / trendMax * 100))}%` }}><span className="v">{item.commits}</span></div></div><span className="d">{item.day.slice(5)}</span></div>)}</div>}</Card></Col>
         <Col xs={24} xl={12}><Card size="small" title="提交类型分布">{typeTotal === 0 ? <Empty description="暂无提交" /> : <><Space wrap style={{ marginBottom: 10 }}>{(data?.commitTypes ?? []).map(item => { const meta = COMMIT_TYPE_META[item.type] ?? COMMIT_TYPE_META['other']!; return <Tag key={item.type} color={meta.color}>{meta.label} {item.count}</Tag> })}</Space><HBarChart rows={(data?.commitTypes ?? []).map(item => ({ label: (COMMIT_TYPE_META[item.type] ?? COMMIT_TYPE_META['other']!).label, value: item.count, display: `${Math.round(item.count / typeTotal * 100)}%` }))} /></>}</Card></Col>
+      </Row>
+      <Row gutter={[12, 12]}>
+        <Col xs={24} xl={12}><Card size="small" title="Session 与 AI 用量" extra={<Typography.Text type="secondary">项目会话内统计</Typography.Text>}>
+          <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+            <Col span={8}><Statistic title="会话数" value={s?.sessions ?? 0} /></Col>
+            <Col span={8}><Statistic title="工具成功率" value={s === undefined || s.toolCalls === 0 ? '—' : `${Math.round((s.toolCalls - s.toolFailures) / s.toolCalls * 100)}%`} /></Col>
+            <Col span={8}><Statistic title="模型请求" value={s?.modelRequests ?? 0} /></Col>
+          </Row>
+          <Table rowKey="model" size="small" columns={sessionModelColumns} dataSource={data?.models ?? []} pagination={false} locale={{ emptyText: '暂无会话数据' }} />
+        </Card></Col>
+        <Col xs={24} xl={12}><Card size="small" title="作者分布"><Table rowKey="authorEmail" size="small" columns={authorColumns} dataSource={data?.authors ?? []} pagination={false} locale={{ emptyText: '暂无作者数据' }} /></Card></Col>
       </Row>
       <Row gutter={[12, 12]}>
         <Col xs={24} xl={10}><Card size="small" title="高频变更目录"><HBarChart color="green" rows={(data?.hotDirectories ?? []).map(item => ({ label: item.directory, value: item.count, display: `${item.count} 个文件` }))} /></Card></Col>
@@ -647,19 +682,49 @@ function UserDetailDrawer({ detail, onClose }: { detail: UserDetailRef | undefin
     { title: '失败', dataIndex: 'toolFailures', width: 70, render: value => value === 0 ? '—' : <Tag color="red">{value}</Tag> },
     { title: '最后活跃', width: 170, dataIndex: 'lastActiveAt', render: value => new Date(value).toLocaleString() },
   ]
-  return <Drawer width={Math.min(1180, window.innerWidth)} open={detail !== undefined} onClose={onClose} className="trajectoryDrawer" title={detail === undefined ? '' : <span>{data?.userName ?? detail.userName} <Typography.Text type="secondary">用户详情</Typography.Text></span>} extra={<Segmented value={days} onChange={value => setDays(value as 7 | 30 | 90)} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />}>
+  const projectColumns: ColumnsType<UserDetail['projects'][number]> = [
+    { title: '项目', render: (_, project) => <div><Typography.Text strong>{project.projectName}</Typography.Text>{project.hasSessions && <Tag color="blue" style={{ marginLeft: 6 }}>有 Session</Tag>}<Typography.Text code copyable type="secondary" className="blockText">{project.gitRemote}</Typography.Text></div> },
+    { title: '提交', dataIndex: 'commits', width: 70 },
+    { title: 'Session', dataIndex: 'sessions', width: 70 },
+    { title: '最后活跃', width: 130, dataIndex: 'lastActiveAt', render: value => value === 0 ? '—' : new Date(value).toLocaleDateString() },
+  ]
+  const trendMax = Math.max(1, ...(data?.commitTrend ?? []).map(item => item.commits))
+  const typeTotal = (data?.commitTypes ?? []).reduce((sum, item) => sum + item.count, 0)
+  const roleMeta: Record<string, { label: string; color: string }> = {
+    admin: { label: '管理员', color: 'purple' }, developer: { label: '开发者', color: 'blue' }, reviewer: { label: '审核员', color: 'cyan' }, user: { label: '普通用户', color: 'default' },
+  }
+  const statusMeta: Record<string, { label: string; color: string }> = {
+    active: { label: '已激活', color: 'green' }, pending: { label: '待审核', color: 'gold' }, rejected: { label: '已拒绝', color: 'red' }, disabled: { label: '已禁用', color: 'default' },
+  }
+  return <Drawer width={Math.min(1180, window.innerWidth)} open={detail !== undefined} onClose={onClose} className="trajectoryDrawer" title={detail === undefined ? '' : <span><Avatar className="aiAvatar" size="small" style={{ marginRight: 8 }}>{data?.userName?.slice(0, 1) ?? detail.userName?.slice(0, 1)}</Avatar>{data?.userName ?? detail.userName} <Typography.Text type="secondary">用户详情</Typography.Text></span>} extra={<Segmented value={days} onChange={value => setDays(value as 7 | 30 | 90)} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />}>
     {detail === undefined ? null : <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
+      <Space wrap size={6} style={{ marginTop: -4 }}>
+        <Tag color={roleMeta[data?.role ?? '']?.color ?? 'default'}>{roleMeta[data?.role ?? '']?.label ?? data?.role ?? '—'}</Tag>
+        <Tag color={statusMeta[data?.status ?? '']?.color ?? 'default'}>{statusMeta[data?.status ?? '']?.label ?? data?.status ?? '—'}</Tag>
+        {(s?.lastActiveAt ?? 0) > 0 && <Tag color="blue">最近活跃 {new Date(s!.lastActiveAt!).toLocaleDateString()}</Tag>}
+      </Space>
       <Row gutter={[12, 12]} className="trajectoryMetrics" style={{ borderRadius: 14 }}>
         <div><span>研发提交</span><strong>{s?.commits ?? 0}</strong><small>近 {days} 天</small></div>
         <div><span>代码增删</span><strong>+{s?.insertions ?? 0} / -{s?.deletions ?? 0}</strong><small>近 {days} 天</small></div>
         <div><span>参与项目</span><strong>{s?.activeProjects ?? 0}</strong><small>有提交的项目</small></div>
-        <div><span>Session</span><strong>{s?.sessions ?? 0}</strong><small>{s === undefined ? '' : `${s.toolCalls} 次工具调用 · ${s.toolFailures} 次失败`}</small></div>
+        <div><span>活跃天数</span><strong>{s?.activeDays ?? 0}</strong><small>有提交的天数</small></div>
         <div><span>AI 成本</span><strong>{fmtCny(s?.costCny ?? 0)}</strong><small>{s === undefined ? '' : `${fmtNum(s.totalTokens)} Token · ${s.modelRequests} 请求`}</small></div>
       </Row>
+      <Row gutter={[12, 12]} className="trajectoryMetrics" style={{ borderRadius: 14 }}>
+        <div><span>Session</span><strong>{s?.sessions ?? 0}</strong><small>{s === undefined || s.toolCalls === 0 ? '无工具活动' : `${s.toolCalls} 次工具调用`}</small></div>
+        <div><span>工具成功率</span><strong>{s === undefined || s.toolCalls === 0 ? '—' : `${s.toolSuccessRate}%`}</strong><small>{s === undefined || s.toolFailures === 0 ? '全部成功' : `${s.toolFailures} 次失败`}</small></div>
+        <div><span>平均轮次</span><strong>{s?.avgTurns ?? 0}</strong><small>每会话平均</small></div>
+        <div><span>模型请求</span><strong>{s?.modelRequests ?? 0}</strong><small>网关记录</small></div>
+        <div><span>最近活跃</span><strong>{(s?.lastActiveAt ?? 0) === 0 ? '—' : new Date(s?.lastActiveAt ?? 0).toLocaleDateString()}</strong><small>提交或会话</small></div>
+      </Row>
       <Row gutter={[12, 12]}>
-        <Col xs={24} xl={10}><Card size="small" title="参与项目"><Table rowKey="gitRemote" size="small" pagination={false} dataSource={data?.projects ?? []} locale={{ emptyText: '统计范围内无提交' }} columns={[{ title: '项目', render: (_, project) => <div><Typography.Text strong>{project.projectName}</Typography.Text>{project.hasSessions && <Tag color="blue" style={{ marginLeft: 6 }}>有 Session</Tag>}<Typography.Text code copyable type="secondary" className="blockText">{project.gitRemote}</Typography.Text></div> }, { title: '提交', dataIndex: 'commits', width: 80 }]} /></Card></Col>
-        <Col xs={24} xl={14}><Card size="small" title="AI 用量（网关记录）"><Table rowKey="model" size="small" pagination={false} dataSource={data?.models ?? []} locale={{ emptyText: '统计范围内无模型请求' }} columns={[{ title: '模型', dataIndex: 'model', ellipsis: true }, { title: '请求', dataIndex: 'requests', width: 80 }, { title: '总 Token', width: 110, render: (_, model) => fmtNum(model.inputTokens + model.outputTokens) }, { title: '成本', width: 100, dataIndex: 'costCny', render: fmtCny }]} /></Card></Col>
+        <Col xs={24} xl={12}><Card size="small" title="提交趋势">{data?.commitTrend?.length === 0 ? <Empty description="统计范围内无提交" /> : <div className="chart-trend" style={{ height: 130 }}>{data?.commitTrend.map(item => <div key={item.day} className="trendGroup"><div className="trendBars"><div className={item.commits === 0 ? 'bar tool empty' : 'bar tool'} style={{ height: `${Math.max(3, Math.round(item.commits / trendMax * 100))}%` }}><span className="v">{item.commits}</span></div></div><span className="d">{item.day.slice(5)}</span></div>)}</div>}</Card></Col>
+        <Col xs={24} xl={12}><Card size="small" title="提交类型分布">{typeTotal === 0 ? <Empty description="暂无提交" /> : <><Space wrap style={{ marginBottom: 10 }}>{(data?.commitTypes ?? []).map(item => { const meta = COMMIT_TYPE_META[item.type] ?? COMMIT_TYPE_META['other']!; return <Tag key={item.type} color={meta.color}>{meta.label} {item.count}</Tag> })}</Space><HBarChart rows={(data?.commitTypes ?? []).map(item => ({ label: (COMMIT_TYPE_META[item.type] ?? COMMIT_TYPE_META['other']!).label, value: item.count, display: `${Math.round(item.count / typeTotal * 100)}%` }))} /></>}</Card></Col>
+      </Row>
+      <Row gutter={[12, 12]}>
+        <Col xs={24} xl={10}><Card size="small" title="参与项目"><Table rowKey="gitRemote" size="small" pagination={false} dataSource={data?.projects ?? []} locale={{ emptyText: '统计范围内无提交' }} columns={projectColumns} /></Card></Col>
+        <Col xs={24} xl={14}><Card size="small" title="AI 用量（网关记录）"><Table rowKey="model" size="small" pagination={false} dataSource={data?.models ?? []} locale={{ emptyText: '统计范围内无模型请求' }} columns={[{ title: '模型', dataIndex: 'model', ellipsis: true }, { title: '请求', dataIndex: 'requests', width: 80 }, { title: '输入 Token', width: 100, dataIndex: 'inputTokens', render: fmtNum }, { title: '输出 Token', width: 100, dataIndex: 'outputTokens', render: fmtNum }, { title: '成本', width: 100, dataIndex: 'costCny', render: fmtCny }]} /></Card></Col>
       </Row>
       <Card size="small" title="最近提交"><Table rowKey="commitHash" size="small" columns={commitColumns} dataSource={data?.commits ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 900 }} /></Card>
       <Card size="small" title="最近 Session"><Table rowKey="sessionId" size="small" columns={sessionColumns} dataSource={data?.recentSessions ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 800 }} /></Card>

@@ -137,6 +137,10 @@ export class TeamService extends Service implements TeamServiceApi {
     return this.database.listAnalyticsByUser(userId)
   }
 
+  async listAnalyticsByProject(gitRemote: string): Promise<readonly TeamSessionAnalytics[]> {
+    return this.database.listAnalyticsByProject(gitRemote)
+  }
+
   async listCodeChanges(since: number) {
     return this.database.listCodeChanges(since)
   }

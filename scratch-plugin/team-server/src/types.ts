@@ -220,6 +220,7 @@ export interface TeamServiceApi {
   listCommitsByUser(userId: string, since: number): Promise<readonly TeamCodeChange[]>
   listModelUsageByUser(userId: string, since: number): Promise<readonly TeamModelUsageRow[]>
   listAnalyticsByUser(userId: string): Promise<readonly TeamSessionAnalytics[]>
+  listAnalyticsByProject(gitRemote: string): Promise<readonly TeamSessionAnalytics[]>
   listCodeChanges(since: number): Promise<readonly TeamCodeChange[]>
   listOwnSessions(userId: string): Promise<readonly TeamSyncedSession[]>
   listSyncedSessions(): Promise<readonly TeamSyncedSessionDetail[]>
