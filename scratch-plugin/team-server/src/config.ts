@@ -5,7 +5,7 @@ let localConfig: Promise<Map<string, string>> | undefined
 async function readLocalConfig(): Promise<Map<string, string>> {
   localConfig ??= readFile(new URL('../.env', import.meta.url), 'utf8').then(text => new Map(
     [...text.matchAll(/^([A-Z][A-Z0-9_]*)=(.+)$/gm)].map(match => [match[1]!, match[2]!.trim()]),
-  ))
+  )).catch(() => new Map())
   return localConfig
 }
 

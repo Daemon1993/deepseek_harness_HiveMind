@@ -16,6 +16,7 @@ type OverviewSummary = {
   userMessages: number; assistantMessages: number
   toolCalls: number; toolFailures: number; toolFailureRate: number
   modelRequests: number; inputTokens: number; outputTokens: number; totalTokens: number
+  gatewayRequests: number; gatewayTokens: number; costCny: number
   activeDurationMs: number; durationMs: number; errors: number
   commits: number; insertions: number; deletions: number
 }
@@ -356,6 +357,7 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
     { label: 'Git 提交', value: String(s?.commits ?? 0), detail: `+${s?.insertions ?? 0} / -${s?.deletions ?? 0}` },
     { label: '对话消息', value: String((s?.userMessages ?? 0) + (s?.assistantMessages ?? 0)), detail: `${s?.userMessages ?? 0} 用户 · ${s?.assistantMessages ?? 0} 助手` },
     { label: '平均请求消耗', value: fmtNum(avgTokens), detail: 'Token / 请求' },
+    { label: 'AI 成本', value: fmtCny(s?.costCny ?? 0), detail: `网关 ${s?.gatewayRequests ?? 0} 次请求` },
     { label: '平均会话活跃', value: fmt(avgActiveTime), detail: `累计 ${fmt(s?.activeDurationMs ?? 0)}` },
   ]
   const userColumns: ColumnsType<OverviewUser> = [
