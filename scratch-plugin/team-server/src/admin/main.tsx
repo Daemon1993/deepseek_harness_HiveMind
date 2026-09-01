@@ -59,6 +59,20 @@ type Usage = {
   models: UsageModel[]; users: UsageUser[]; recent: UsageRow[]
 }
 
+// ── 项目详情类型（/team/admin/projects/:remote）──────────────
+type ProjectDetailCommit = { userId: string; userName: string; commitHash: string; authorName?: string; authorEmail?: string; subject?: string; message?: string; changedFiles?: string[]; files: number; insertions: number; deletions: number; time: number; type: string }
+/** Drawer 入口引用：仅携带定位信息，实际数据按需拉取。 */
+type ProjectDetailRef = { gitRemote: string; projectName?: string }
+type ProjectDetail = {
+  gitRemote: string; projectName: string; rangeDays: number; generatedAt: string
+  summary: { commits: number; activeDevelopers: number; activeDays: number; insertions: number; deletions: number; lastCommitAt: number; topChangedFiles: number }
+  trend: { day: string; commits: number; insertions: number; deletions: number }[]
+  authors: { authorEmail: string; authorName: string; commits: number; insertions: number; deletions: number; boundUserName?: string }[]
+  commitTypes: { type: string; count: number }[]
+  hotDirectories: { directory: string; count: number }[]
+  commits: ProjectDetailCommit[]
+}
+
 const statusOptions = [{ value: 'pending', label: '待审核' }, { value: 'active', label: '已激活' }, { value: 'rejected', label: '已拒绝' }, { value: 'disabled', label: '已禁用' }] satisfies { value: Status; label: string }[]
 const roleOptions = [{ value: 'admin', label: '管理员' }, { value: 'developer', label: '开发者' }, { value: 'reviewer', label: '审核员' }, { value: 'user', label: '普通用户' }] satisfies { value: Role; label: string }[]
 const statusColors: Record<Status, string> = { pending: 'gold', active: 'green', rejected: 'red', disabled: 'default' }
@@ -487,6 +501,67 @@ function UsagePanel() {
   </Space>
 }
 
+const COMMIT_TYPE_META: Record<string, { label: string; color: string }> = {
+  feat: { label: '新功能', color: 'blue' }, fix: { label: 'Bug 修复', color: 'red' }, refactor: { label: '重构', color: 'purple' },
+  chore: { label: '维护', color: 'default' }, docs: { label: '文档', color: 'cyan' }, test: { label: '测试', color: 'green' }, other: { label: '其他', color: 'gold' },
+}
+
+/** 项目详情抽屉：Commit 趋势/作者分布/活跃目录/类型分布/最近提交。 */
+function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | undefined; onClose: () => void }) {
+  const [days, setDays] = useState<7 | 30 | 90>(30)
+  const [data, setData] = useState<ProjectDetail>()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    if (detail === undefined) return
+    let live = true
+    setLoading(true); setError('')
+    void fetch(`/team/admin/projects/${encodeURIComponent(detail.gitRemote)}?days=${days}`).then(async response => {
+      const body = await response.json() as ProjectDetail & { message?: string }
+      if (!response.ok) throw new Error(body.message ?? '加载项目详情失败')
+      if (live) setData(body)
+    }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载项目详情失败') }).finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [detail, days])
+  const s = data?.summary
+  const trendMax = Math.max(1, ...(data?.trend ?? []).map(item => item.commits))
+  const typeTotal = (data?.commitTypes ?? []).reduce((sum, item) => sum + item.count, 0)
+  const authorColumns: ColumnsType<ProjectDetail['authors'][number]> = [
+    { title: '作者', render: (_, author) => <Space><Avatar shape="square" size="small">{author.authorName.slice(0, 1)}</Avatar><div><Typography.Text strong>{author.authorName}</Typography.Text><Typography.Text code copyable type="secondary" className="blockText">{author.authorEmail}</Typography.Text>{author.boundUserName !== undefined && <Tag color="green">已绑定：{author.boundUserName}</Tag>}</div></Space> },
+    { title: '提交', dataIndex: 'commits', width: 90 },
+    { title: '代码增删', width: 130, render: (_, author) => <span><Typography.Text type="success">+{author.insertions}</Typography.Text> <Typography.Text type="danger">-{author.deletions}</Typography.Text></span> },
+  ]
+  const commitColumns: ColumnsType<ProjectDetailCommit> = [
+    { title: '提交', width: 90, render: (_, commit) => <Typography.Text code copyable>{commit.commitHash.slice(0, 8)}</Typography.Text> },
+    { title: '作者', width: 140, render: (_, commit) => commit.authorName ?? commit.userName },
+    { title: '说明', render: (_, commit) => <div><Typography.Text>{commit.subject ?? commit.message ?? '—'}</Typography.Text>{commit.changedFiles !== undefined && commit.changedFiles.length > 0 && <Typography.Text type="secondary" className="blockText">{commit.changedFiles.slice(0, 5).join(' · ')}{commit.changedFiles.length > 5 ? ` +${commit.changedFiles.length - 5}` : ''}</Typography.Text>}</div> },
+    { title: '类型', width: 90, render: (_, commit) => { const meta = COMMIT_TYPE_META[commit.type] ?? COMMIT_TYPE_META['other']!; return <Tag color={meta.color}>{meta.label}</Tag> } },
+    { title: '增删', width: 120, render: (_, commit) => <span><Typography.Text type="success">+{commit.insertions}</Typography.Text> <Typography.Text type="danger">-{commit.deletions}</Typography.Text></span> },
+    { title: '时间', width: 170, dataIndex: 'time', render: value => new Date(value).toLocaleString() },
+  ]
+  return <Drawer width={Math.min(1180, window.innerWidth)} open={detail !== undefined} onClose={onClose} className="trajectoryDrawer" title={detail === undefined ? '' : <span>{data?.projectName ?? detail.projectName ?? detail.gitRemote} <Typography.Text type="secondary">项目详情</Typography.Text></span>} extra={<Segmented value={days} onChange={value => setDays(value as 7 | 30 | 90)} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />}>
+    {detail === undefined ? null : <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
+      <Row gutter={[12, 12]} className="trajectoryMetrics" style={{ borderRadius: 14 }}>
+        <div><span>提交数</span><strong>{s?.commits ?? 0}</strong><small>近 {days} 天</small></div>
+        <div><span>活跃开发者</span><strong>{s?.activeDevelopers ?? 0}</strong><small>按 Git 作者</small></div>
+        <div><span>活跃天数</span><strong>{s?.activeDays ?? 0}</strong><small>有提交的天数</small></div>
+        <div><span>代码增删</span><strong>+{s?.insertions ?? 0} / -{s?.deletions ?? 0}</strong><small>近 {days} 天</small></div>
+        <div><span>最后提交</span><strong>{(s?.lastCommitAt ?? 0) === 0 ? '—' : new Date(s?.lastCommitAt ?? 0).toLocaleDateString()}</strong><small>{s === undefined ? '' : `${(s.topChangedFiles ?? 0)} 个变更文件`}</small></div>
+      </Row>
+      <Card size="small" title="提交趋势">{loading ? <Card loading /> : data?.trend.length === 0 ? <Empty description="该时间段内没有提交" /> : <div className="chart-trend" style={{ height: 130 }}>{data?.trend.map(item => <div key={item.day} className="trendGroup"><div className="trendBars"><div className={item.commits === 0 ? 'bar tool empty' : 'bar tool'} style={{ height: `${Math.max(3, Math.round(item.commits / trendMax * 100))}%` }}><span className="v">{item.commits}</span></div></div><span className="d">{item.day.slice(5)}</span></div>)}</div>}</Card>
+      <Row gutter={[12, 12]}>
+        <Col xs={24} xl={12}><Card size="small" title="作者分布"><Table rowKey="authorEmail" size="small" columns={authorColumns} dataSource={data?.authors ?? []} pagination={false} locale={{ emptyText: '暂无作者数据' }} /></Card></Col>
+        <Col xs={24} xl={12}><Card size="small" title="提交类型分布">{typeTotal === 0 ? <Empty description="暂无提交" /> : <><Space wrap style={{ marginBottom: 10 }}>{(data?.commitTypes ?? []).map(item => { const meta = COMMIT_TYPE_META[item.type] ?? COMMIT_TYPE_META['other']!; return <Tag key={item.type} color={meta.color}>{meta.label} {item.count}</Tag> })}</Space><HBarChart rows={(data?.commitTypes ?? []).map(item => ({ label: (COMMIT_TYPE_META[item.type] ?? COMMIT_TYPE_META['other']!).label, value: item.count, display: `${Math.round(item.count / typeTotal * 100)}%` }))} /></>}</Card></Col>
+      </Row>
+      <Row gutter={[12, 12]}>
+        <Col xs={24} xl={10}><Card size="small" title="高频变更目录"><HBarChart color="green" rows={(data?.hotDirectories ?? []).map(item => ({ label: item.directory, value: item.count, display: `${item.count} 个文件` }))} /></Card></Col>
+        <Col xs={24} xl={14}><Card size="small" title="最近提交" extra={<Typography.Text type="secondary">Git 作者归属优先，未绑定显示 Git 名</Typography.Text>}><Table rowKey="commitHash" size="small" columns={commitColumns} dataSource={data?.commits ?? []} pagination={{ pageSize: 8, showSizeChanger: false }} scroll={{ x: 900 }} /></Card></Col>
+      </Row>
+    </Space>}
+  </Drawer>
+}
+
 function useOverview(days: 1 | 7 | 30): { data?: Overview; loading: boolean; error: string } {
   const [data, setData] = useState<Overview>()
   const [loading, setLoading] = useState(true)
@@ -590,6 +665,7 @@ function UserDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =>
 function ProjectDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) => void }) {
   const [days, setDays] = useState<1 | 7 | 30>(7)
   const { data, loading, error } = useOverview(days)
+  const [projectDetail, setProjectDetail] = useState<ProjectDetailRef>()
   const columns: ColumnsType<OverviewDirectory> = [
     { title: '项目', render: (_, project) => <div><Typography.Text strong>{project.name}</Typography.Text><Typography.Text code copyable={{ text: project.gitRemote }} type="secondary" className="blockText analyticsPath">{project.gitRemote}</Typography.Text></div> },
     { title: '成员', dataIndex: 'users', width: 75 },
@@ -603,11 +679,13 @@ function ProjectDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail)
     { title: '活跃时长', width: 100, render: (_, project) => fmt(project.durationMs) },
     { title: '错误', dataIndex: 'errors', width: 70, render: value => value === 0 ? '—' : <Tag color="red">{value}</Tag> },
     { title: '最后活跃', dataIndex: 'lastActiveAt', width: 180, render: value => new Date(value).toLocaleString() },
+    { title: '操作', width: 90, render: (_, project) => <Button type="link" onClick={() => setProjectDetail({ gitRemote: project.gitRemote, projectName: project.name })}>详情</Button> },
   ]
   const activeMembers = new Set((data?.directories ?? []).flatMap(project => project.members.map(member => member.userId))).size
   return <Space direction="vertical" size={18} className="analyticsPage"><DimensionToolbar days={days} onChange={setDays} />{error && <Alert type="error" showIcon message={error} />}
     <Row gutter={[16, 16]} className="analyticsStats"><Col xs={12} lg={6}><Card loading={loading}><Statistic title="活跃项目" value={data?.directories.length ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="参与成员" value={activeMembers} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="项目会话" value={data?.directories.reduce((sum, project) => sum + project.sessions, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Token" value={fmtNum(data?.directories.reduce((sum, project) => sum + project.totalTokens, 0) ?? 0)} /></Card></Col></Row>
     <Card title="Git 项目使用情况" className="analyticsCard"><Table rowKey="id" loading={loading} columns={columns} dataSource={data?.directories ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1450 }} expandable={{ expandedRowRender: project => <Space direction="vertical" size={14} style={{ width: '100%' }}><Space wrap><Typography.Text type="secondary">参与成员</Typography.Text>{project.members.map(member => <Tag key={member.userId}>{member.userName}</Tag>)}</Space><DimensionDetail models={project.models} tools={project.tools} commits={project.commits} sessions={(data?.recentSessions ?? []).filter(session => session.gitRemote === project.id)} onOpenSession={onOpenSession} /></Space> }} /></Card>
+    <ProjectDetailDrawer detail={projectDetail} onClose={() => setProjectDetail(undefined)} />
   </Space>
 }
 

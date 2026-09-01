@@ -10,6 +10,7 @@ import { analyzeSessionEvents, sessionTitle } from './session-metrics.ts'
 import { reconcileSessions } from './reconcile.ts'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { costOf, usageFromObject, usageFromSseText, type UsageTokens } from './model-usage.ts'
+import { classifyCommitType, topChangedDirectories } from './project-analytics.ts'
 import { readLimitedJson, RequestBodyTooLargeError } from './request-body.ts'
 import {
   buildSessionCandidate,
@@ -523,6 +524,55 @@ async function handleAdminGitEmails(ctx: TeamContext, sessions: AuthSessions, re
     return
   }
   sendJson(res, 405, { message: '只支持 GET、POST 或 DELETE 请求' })
+}
+
+async function handleAdminProjectDetail(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
+  if (!await requireAdmin(ctx, sessions, req, res)) return
+  const gitRemote = decodeURIComponent(new URL(req.url ?? '', 'http://localhost').pathname.split('/').at(-1) ?? '')
+  if (gitRemote === '') { sendJson(res, 400, { message: '缺少项目标识' }); return }
+  const daysParam = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('days') ?? '30')
+  const days = daysParam === 7 || daysParam === 30 || daysParam === 90 ? daysParam : 30
+  const since = Date.now() - days * 24 * 60 * 60 * 1000
+  const [commits, trend, authors, changedFiles] = await Promise.all([
+    ctx.team.listCommitsByProject(gitRemote, since),
+    ctx.team.projectCommitTrend(gitRemote, since),
+    ctx.team.projectAuthorStats(gitRemote, since),
+    ctx.team.projectChangedFiles(gitRemote, since),
+  ])
+  const typeBuckets = new Map<string, number>()
+  for (const commit of commits) {
+    const type = classifyCommitType(commit.subject)
+    typeBuckets.set(type, (typeBuckets.get(type) ?? 0) + 1)
+  }
+  const activeDays = new Set(trend.map(item => item.day)).size
+  const authorEmails = new Map((await ctx.team.listGitEmailBindings()).map(binding => [binding.email, binding.userName]))
+  const projectName = gitRemote.replace(/[/\\]$/u, '').split(/[/\\:]/u).at(-1)?.replace(/\.git$/u, '') || gitRemote
+  sendJson(res, 200, {
+    gitRemote,
+    projectName,
+    rangeDays: days,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      commits: commits.length,
+      activeDevelopers: authors.length,
+      activeDays,
+      insertions: commits.reduce((sum, commit) => sum + commit.insertions, 0),
+      deletions: commits.reduce((sum, commit) => sum + commit.deletions, 0),
+      lastCommitAt: commits[0]?.time ?? 0,
+      topChangedFiles: changedFiles.length,
+    },
+    trend,
+    authors: authors.map(author => ({
+      ...author,
+      ...(authorEmails.get(author.authorEmail.toLowerCase()) === undefined ? {} : { boundUserName: authorEmails.get(author.authorEmail.toLowerCase()) }),
+    })),
+    commitTypes: [...typeBuckets.entries()]
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count),
+    hotDirectories: topChangedDirectories(changedFiles),
+    commits: commits.slice(0, 100).map(commit => ({ ...commit, type: classifyCommitType(commit.subject) })),
+  })
 }
 
 async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1231,6 +1281,7 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/overview', handler: (req, res) => handleAdminOverview(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/usage', handler: (req, res) => handleAdminUsage(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/git-emails', handler: (req, res) => handleAdminGitEmails(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'prefix', path: '/team/admin/projects', handler: (req, res) => handleAdminProjectDetail(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/insights/sessions', handler: (req, res) => handleAdminSessionTimeline(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/users', handler: (req, res) => handleAdminUser(ctx, sessions, req, res) }),
   ctx.webServer.register({

@@ -1,5 +1,5 @@
 import { Service } from "@deepseek-ai/cordis";
-import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChangeInput, TeamContext, TeamGitEmailBinding, TeamGitOpInput, TeamModelUsageInput, TeamModelUsageRow, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
+import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChange, TeamCodeChangeInput, TeamContext, TeamGitEmailBinding, TeamGitOpInput, TeamModelUsageInput, TeamModelUsageRow, TeamProjectAuthor, TeamProjectTrend, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
 
 import users from "./users.json" with { type: "json" };
 
@@ -107,6 +107,22 @@ export class TeamService extends Service implements TeamServiceApi {
 
   async unbindGitEmail(email: string): Promise<boolean> {
     return this.database.unbindGitEmail(email)
+  }
+
+  async listCommitsByProject(gitRemote: string, since: number): Promise<readonly TeamCodeChange[]> {
+    return this.database.listCommitsByProject(gitRemote, since)
+  }
+
+  async projectCommitTrend(gitRemote: string, since: number): Promise<readonly TeamProjectTrend[]> {
+    return this.database.projectCommitTrend(gitRemote, since)
+  }
+
+  async projectAuthorStats(gitRemote: string, since: number): Promise<readonly TeamProjectAuthor[]> {
+    return this.database.projectAuthorStats(gitRemote, since)
+  }
+
+  async projectChangedFiles(gitRemote: string, since: number): Promise<readonly string[]> {
+    return this.database.projectChangedFiles(gitRemote, since)
   }
 
   async listCodeChanges(since: number) {

@@ -148,6 +148,23 @@ export interface TeamGitEmailBinding {
   userName: string
 }
 
+/** One daily commit bucket for a project. */
+export interface TeamProjectTrend {
+  day: string
+  commits: number
+  insertions: number
+  deletions: number
+}
+
+/** One author's commit aggregates within a project window. */
+export interface TeamProjectAuthor {
+  authorEmail: string
+  authorName: string
+  commits: number
+  insertions: number
+  deletions: number
+}
+
 /** One model-usage record captured by the gateway from a forwarded response. */
 export interface TeamModelUsageInput {
   requestId: string
@@ -187,6 +204,10 @@ export interface TeamServiceApi {
   listGitEmailBindings(): Promise<readonly TeamGitEmailBinding[]>
   bindGitEmail(userId: string, email: string): Promise<boolean>
   unbindGitEmail(email: string): Promise<boolean>
+  listCommitsByProject(gitRemote: string, since: number): Promise<readonly TeamCodeChange[]>
+  projectCommitTrend(gitRemote: string, since: number): Promise<readonly TeamProjectTrend[]>
+  projectAuthorStats(gitRemote: string, since: number): Promise<readonly TeamProjectAuthor[]>
+  projectChangedFiles(gitRemote: string, since: number): Promise<readonly string[]>
   listCodeChanges(since: number): Promise<readonly TeamCodeChange[]>
   listOwnSessions(userId: string): Promise<readonly TeamSyncedSession[]>
   listSyncedSessions(): Promise<readonly TeamSyncedSessionDetail[]>
