@@ -35,6 +35,15 @@ export interface TeamAuditLogInput {
   details?: Record<string, string | number | boolean | null>
 }
 
+/** One persisted audit row as served to administrators. */
+export interface TeamAuditLogRow {
+  occurredAt: string
+  event: string
+  level: 'info' | 'warn' | 'error'
+  userId: string | null
+  message: string
+}
+
 /** Fully rendered operational record written to stdout and audit storage. */
 export interface TeamLogRecord extends TeamAuditLogInput {
   timestamp: string
@@ -217,6 +226,7 @@ export interface TeamServiceApi {
   listSyncStatus(): Promise<readonly TeamSessionSyncState[]>
   saveSessionAnalytics(snapshot: TeamSessionAnalytics): Promise<void>
   listSessionAnalytics(): Promise<readonly TeamSessionAnalytics[]>
+  listAuditLogs(options: { since: number; events?: readonly string[]; limit: number }): Promise<readonly TeamAuditLogRow[]>
   audit(entry: TeamAuditLogInput): Promise<void>
 }
 

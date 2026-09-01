@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import type { TeamCodeChange, TeamCodeChangeInput, TeamGitEmailBinding, TeamLogRecord, TeamModelUsageInput, TeamModelUsageRow, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
+import type { TeamAuditLogRow, TeamCodeChange, TeamCodeChangeInput, TeamGitEmailBinding, TeamLogRecord, TeamModelUsageInput, TeamModelUsageRow, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
 import { readTeamConfig } from './config.ts'
 
 export type TeamAccount = TeamUser & { password: string }
@@ -648,6 +648,26 @@ export class TeamDatabase {
   async unbindGitEmail(email: string): Promise<boolean> {
     const result = await this.client().query('DELETE FROM team_git_emails WHERE email = $1', [email])
     return result.rowCount === 1
+  }
+
+  /** Read recent audit rows, newest first, optionally filtered by event. */
+  async listAuditLogs(options: { since: number; events?: readonly string[]; limit: number }): Promise<TeamAuditLogRow[]> {
+    const result = await this.client().query<{ occurred_at: Date; event: string; level: TeamAuditLogRow['level']; user_id: string | null; message: string }>(
+      `SELECT occurred_at, event, level, user_id, COALESCE(message, event) AS message
+       FROM team_audit_logs
+       WHERE occurred_at >= to_timestamp($1 / 1000.0)
+         AND (cardinality($2::text[]) = 0 OR event = ANY($2::text[]))
+       ORDER BY occurred_at DESC
+       LIMIT $3`,
+      [options.since, options.events ?? [], options.limit],
+    )
+    return result.rows.map(row => ({
+      occurredAt: row.occurred_at.toISOString(),
+      event: row.event,
+      level: row.level,
+      userId: row.user_id,
+      message: row.message,
+    }))
   }
 
   /** Record one model-usage row captured by the gateway. */

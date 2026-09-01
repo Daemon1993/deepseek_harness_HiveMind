@@ -1,5 +1,5 @@
 import { Service } from "@deepseek-ai/cordis";
-import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChange, TeamCodeChangeInput, TeamContext, TeamGitEmailBinding, TeamGitOpInput, TeamModelUsageInput, TeamModelUsageRow, TeamProjectAuthor, TeamProjectTrend, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
+import type { TeamAdminUser, TeamAuditLogInput, TeamAuditLogRow, TeamCodeChange, TeamCodeChangeInput, TeamContext, TeamGitEmailBinding, TeamGitOpInput, TeamModelUsageInput, TeamModelUsageRow, TeamProjectAuthor, TeamProjectTrend, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
 
 import users from "./users.json" with { type: "json" };
 
@@ -159,6 +159,10 @@ export class TeamService extends Service implements TeamServiceApi {
 
   async listSessionAnalytics(): Promise<readonly TeamSessionAnalytics[]> {
     return this.database.listSessionAnalytics()
+  }
+
+  async listAuditLogs(options: { since: number; events?: readonly string[]; limit: number }): Promise<readonly TeamAuditLogRow[]> {
+    return this.database.listAuditLogs(options)
   }
 
   async audit(entry: TeamAuditLogInput): Promise<void> {

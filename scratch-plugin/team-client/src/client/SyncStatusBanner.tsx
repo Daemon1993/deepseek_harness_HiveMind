@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 type SyncStatusState = { syncing: boolean; lastSyncAt: number; lastSyncedSession?: string }
+type GitStatusState = { scanned: number; imported: number; totalCommits: number; lastScanAt: number; lastError?: string }
 
 /** 每次自动或手动同步至少展示 2 秒的实时效果。 */
 const MIN_DISPLAY_MS = 2000
@@ -9,6 +10,7 @@ const POLL_MS = 500
 /** 侧边栏底部悬浮同步胶囊（不占布局）：显示自动同步状态。 */
 export function SyncStatusBanner() {
   const [status, setStatus] = useState<SyncStatusState>({ syncing: false, lastSyncAt: 0 })
+  const [git, setGit] = useState<GitStatusState>({ scanned: 0, imported: 0, totalCommits: 0, lastScanAt: 0 })
   const [showUntil, setShowUntil] = useState(0)
   const [doneUntil, setDoneUntil] = useState(0)
   const [now, setNow] = useState(Date.now())
@@ -34,7 +36,12 @@ export function SyncStatusBanner() {
     }
     void tick()
     const timer = setInterval(() => { void tick() }, POLL_MS)
-    return () => { clearInterval(timer) }
+    const gitTimer = setInterval(() => {
+      void fetch('/team/git/status', { credentials: 'same-origin', cache: 'no-store' }).then(async response => {
+        if (response.ok) setGit(await response.json() as GitStatusState)
+      }).catch(() => undefined)
+    }, 3000)
+    return () => { clearInterval(timer); clearInterval(gitTimer) }
   }, [])
 
   const manualSync = async (): Promise<void> => {
@@ -50,7 +57,9 @@ export function SyncStatusBanner() {
     ? new Date(status.lastSyncAt).toLocaleTimeString()
     : ''
 
-  return <div style={{
+  const gitTimeLabel = git.lastScanAt > 0 ? new Date(git.lastScanAt).toLocaleTimeString() : ''
+
+  return <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 999, display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}><div style={{
     position: 'fixed',
     bottom: 16,
     right: 16, // 右下角空白处悬浮
@@ -77,5 +86,16 @@ export function SyncStatusBanner() {
       lineHeight: '16px',
     }}>手动同步</button>
     <style>{`@keyframes team-sync-pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }`}</style>
-  </div>
+  </div><div style={{
+    display: 'flex', alignItems: 'center', gap: 5,
+    padding: '3px 9px', fontSize: 10.5, fontWeight: 600, borderRadius: 12,
+    color: git.lastError !== undefined ? '#b45309' : git.lastScanAt > 0 ? '#1677ff' : '#6b7280',
+    background: git.lastError !== undefined ? '#fff7e6' : git.lastScanAt > 0 ? '#e6f4ff' : 'rgba(255,255,255,.92)',
+    border: git.lastError !== undefined ? '1px solid #ffd591' : git.lastScanAt > 0 ? '1px solid #91caff' : '1px solid #e5e5e5',
+    boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+  }}>
+    <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: git.lastError !== undefined ? '#faad14' : git.lastScanAt > 0 ? '#1677ff' : '#d9d9d9' }} />
+    <span>Git {git.imported > 0 ? `${git.imported} 仓` : '未导入'}{git.scanned > 0 ? ` · ${git.totalCommits} 条` : ''}</span>
+    {git.lastError !== undefined ? <span style={{ fontWeight: 400, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={git.lastError}>异常</span> : gitTimeLabel !== '' && <span style={{ fontWeight: 400 }}>{gitTimeLabel}</span>}
+  </div></div>
 }

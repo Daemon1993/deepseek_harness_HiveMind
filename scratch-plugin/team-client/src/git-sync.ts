@@ -30,6 +30,13 @@ interface WatchedRepository {
   lastSyncedHash?: string
 }
 
+/** 一次扫描的结果：时间、抽取条数、错误。 */
+interface ScanState {
+  lastScanAt: number
+  lastScanCommits: number
+  lastError?: string
+}
+
 const dataRoot = process.env.DSH_HOME ?? join(homedir(), '.dsh')
 const dir = join(dataRoot, 'team-client')
 const watchedPath = join(dir, 'watched.json')
@@ -188,7 +195,7 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
 }
 
 /** 抽取一个仓库的全部/增量提交并批量上报；成功更新扫描游标并持久化。 */
-async function backfillRepository(serverURL: string, headers: Record<string, string>, repository: WatchedRepository, save: () => Promise<void>): Promise<void> {
+async function backfillRepository(serverURL: string, headers: Record<string, string>, repository: WatchedRepository, state: ScanState, save: () => Promise<void>): Promise<void> {
   const gitRemote = await optionalGit(repository.root, ['remote', 'get-url', 'origin'])
   let commits: ScannedCommit[]
   try {
@@ -200,26 +207,34 @@ async function backfillRepository(serverURL: string, headers: Record<string, str
   }
   if (commits.length === 0) return
   gitLog('info', `scan ${commits.length} commit(s) root=${repository.root} range=${repository.lastSyncedHash === undefined ? 'full' : 'incremental'}`)
-  for (let offset = 0; offset < commits.length; offset += UPLOAD_BATCH_SIZE) {
-    const batch = commits.slice(offset, offset + UPLOAD_BATCH_SIZE).map(commit => ({
-      commitHash: commit.commitHash,
-      cwd: repository.root,
-      ...(gitRemote === undefined ? {} : { gitRemote }),
-      authorName: commit.authorName,
-      authorEmail: commit.authorEmail,
-      subject: commit.subject,
-      message: commit.message,
-      changedFiles: commit.changedFiles,
-      files: commit.files,
-      insertions: commit.insertions,
-      deletions: commit.deletions,
-      time: commit.time,
-    }))
-    await postJson(`${serverURL}/team/api/git/changes`, headers, { commits: batch })
+  try {
+    for (let offset = 0; offset < commits.length; offset += UPLOAD_BATCH_SIZE) {
+      const batch = commits.slice(offset, offset + UPLOAD_BATCH_SIZE).map(commit => ({
+        commitHash: commit.commitHash,
+        cwd: repository.root,
+        ...(gitRemote === undefined ? {} : { gitRemote }),
+        authorName: commit.authorName,
+        authorEmail: commit.authorEmail,
+        subject: commit.subject,
+        message: commit.message,
+        changedFiles: commit.changedFiles,
+        files: commit.files,
+        insertions: commit.insertions,
+        deletions: commit.deletions,
+        time: commit.time,
+      }))
+      await postJson(`${serverURL}/team/api/git/changes`, headers, { commits: batch })
+    }
+    // 全部批次成功后推进游标：下次只扫最新提交之后的新增。
+    repository.lastSyncedHash = commits[0]!.commitHash
+    state.lastScanAt = Date.now()
+    state.lastScanCommits = commits.length
+    delete state.lastError
+    await save()
+  } catch (error) {
+    state.lastError = error instanceof Error ? error.message : String(error)
+    throw error
   }
-  // 全部批次成功后推进游标：下次只扫最新提交之后的新增。
-  repository.lastSyncedHash = commits[0]!.commitHash
-  await save()
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<{ cwd?: unknown } | undefined> {
@@ -254,6 +269,7 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
   let watched = new Map<string, WatchedRepository>()
   let stopped = false
   let backfilling = false
+  const scanStates = new Map<string, ScanState>()
   const scanMinutes = Number(process.env.TEAM_GIT_SCAN_MINUTES ?? String(DEFAULT_SCAN_MINUTES))
   const scanIntervalMs = Number.isFinite(scanMinutes) && scanMinutes >= 1 ? scanMinutes * 60 * 1000 : DEFAULT_SCAN_MINUTES * 60 * 1000
 
@@ -265,8 +281,10 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
       const headers = await authHeaders()
       if (headers === undefined) return
       for (const repository of watched.values()) {
+        const state = scanStates.get(repository.root) ?? { lastScanAt: 0, lastScanCommits: 0 }
+        scanStates.set(repository.root, state)
         try {
-          await backfillRepository(serverURL, headers, repository, () => saveWatched(watched))
+          await backfillRepository(serverURL, headers, repository, state, () => saveWatched(watched))
         } catch (error) {
           gitLog('warn', `backfill failed root=${repository.root}: ${error instanceof Error ? error.message : String(error)}`)
         }
@@ -289,7 +307,9 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
       await saveWatched(watched)
       json(res, 200, { ok: true, root })
       // 导入即全量抽取该仓库全部历史提交。
-      void backfillRepository(serverURL, (await authHeaders()) ?? {}, watched.get(root)!, () => saveWatched(watched)).catch(error => {
+      const state = scanStates.get(root) ?? { lastScanAt: 0, lastScanCommits: 0 }
+      scanStates.set(root, state)
+      void backfillRepository(serverURL, (await authHeaders()) ?? {}, watched.get(root)!, state, () => saveWatched(watched)).catch(error => {
         gitLog('warn', `import backfill failed root=${root}: ${error instanceof Error ? error.message : String(error)}`)
       })
     } }),
@@ -304,7 +324,26 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
       json(res, 200, { ok: true })
     } }),
     ctx.webServer.register({ kind: 'exact', path: '/team/git/status', handler(_req, res) {
-      json(res, 200, { imported: [...watched.values()].map(repository => ({ root: repository.root, hasCursor: repository.lastSyncedHash !== undefined })) })
+      let totalCommits = 0
+      let lastScanAt = 0
+      let lastError: string | undefined
+      for (const state of scanStates.values()) {
+        totalCommits += state.lastScanCommits
+        lastScanAt = Math.max(lastScanAt, state.lastScanAt)
+        if (state.lastError !== undefined) lastError = state.lastError
+      }
+      json(res, 200, {
+        scanned: scanStates.size,
+        imported: watched.size,
+        totalCommits,
+        lastScanAt,
+        ...(lastError === undefined ? {} : { lastError }),
+        repos: [...watched.values()].map(repository => ({
+          root: repository.root,
+          hasCursor: repository.lastSyncedHash !== undefined,
+          ...(() => { const state = scanStates.get(repository.root); return state === undefined ? {} : { lastScanAt: state.lastScanAt, lastScanCommits: state.lastScanCommits, ...(state.lastError === undefined ? {} : { lastError: state.lastError }) } })(),
+        })),
+      })
     } }),
   ]
 

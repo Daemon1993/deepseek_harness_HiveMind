@@ -80,9 +80,9 @@ describe('project import Git synchronization', () => {
       const statusRequest = Object.assign(Readable.from([]), { method: 'GET' })
       let statusBody = ''
       await handlers.get('/team/git/status')!(statusRequest, { writeHead() {}, end(body) { statusBody = body } })
-      const parsed = JSON.parse(statusBody) as { imported: { root: string; hasCursor: boolean }[] }
+      const parsed = JSON.parse(statusBody) as { repos: { root: string; hasCursor: boolean }[] }
       const normalizedRoot = (await run('git', ['-C', repositoryRoot, 'rev-parse', '--show-toplevel'])).stdout.trim()
-      expect(parsed.imported.find(item => item.root === normalizedRoot)?.hasCursor).toBe(true)
+      expect(parsed.repos.find(item => item.root === normalizedRoot)?.hasCursor).toBe(true)
     }, { timeout: 5_000 })
     requests.length = 0
     await handlers.get('/team/git/import')!(Object.assign(Readable.from([JSON.stringify({ cwd: repositoryRoot })]), { method: 'POST' }), { writeHead(value) { status = value }, end() {} })
