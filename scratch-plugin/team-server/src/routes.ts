@@ -648,9 +648,10 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
   if (days === undefined) { sendJson(res, 400, { message: '统计范围只支持 1、7 或 30 天' }); return }
   const owners = await listEnrichedSessionOwners(ctx)
   const threshold = Date.now() - days * 24 * 60 * 60 * 1000
-  const [inspected, codeChanges] = await Promise.all([
+  const [inspected, codeChanges, modelUsage] = await Promise.all([
     inspectOwnedSessions(ctx, owners),
     ctx.team.listCodeChanges(threshold),
+    ctx.team.listModelUsage(threshold),
   ])
 
   const users = new Map<string, UserAggregate>()
@@ -774,6 +775,9 @@ async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req
       toolFailureRate: totalToolCalls === 0 ? 0 : Math.round(totalToolFailures / totalToolCalls * 1000) / 10,
       modelRequests: totalModelRequests,
       inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens,
+      gatewayRequests: modelUsage.length,
+      gatewayTokens: modelUsage.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0),
+      costCny: modelUsage.reduce((sum, row) => sum + row.costCny, 0),
       activeDurationMs: totalActiveMs, durationMs: totalDurationMs, errors: totalErrors,
       commits: codeChanges.length,
       insertions: codeChanges.reduce((sum, commit) => sum + commit.insertions, 0),
