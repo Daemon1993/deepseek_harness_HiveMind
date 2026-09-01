@@ -181,7 +181,10 @@ async function saveWatched(watched: Map<string, WatchedRepository>): Promise<voi
 
 async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<void> {
   const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
-  if (!response.ok) throw new Error(`Git metadata upload failed: HTTP ${response.status}`)
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`Git metadata upload failed: HTTP ${response.status}${detail === '' ? '' : ` — ${detail.slice(0, 200)}`}`)
+  }
 }
 
 /** 抽取一个仓库的全部/增量提交并批量上报；成功更新扫描游标并持久化。 */

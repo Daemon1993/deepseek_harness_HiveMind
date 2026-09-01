@@ -1003,7 +1003,13 @@ async function handleGitChanges(ctx: TeamContext, sessions: AuthSessions, req: I
       && typeof c.deletions === 'number' && Number.isInteger(c.deletions) && c.deletions >= 0)) {
     sendJson(res, 400, { message: '无效的代码变更记录' }); return
   }
-  await ctx.team.recordCodeChanges(userId, input.commits as TeamCodeChangeInput[])
+  try {
+    await ctx.team.recordCodeChanges(userId, input.commits as TeamCodeChangeInput[])
+  } catch (error) {
+    writeTeamLog({ level: 'error', event: 'git.changes.record_failed', message: error instanceof Error ? error.message : String(error), userId })
+    sendJson(res, 500, { message: '提交记录入库失败' })
+    return
+  }
   sendJson(res, 200, { ok: true })
 }
 
