@@ -5,7 +5,7 @@ import type { ColumnsType } from 'antd/es/table'
 
 type Role = 'admin' | 'developer' | 'reviewer' | 'user'
 type Status = 'pending' | 'active' | 'rejected' | 'disabled'
-type User = { id: string; email?: string; name: string; status: Status; role: Role; password?: string }
+type User = { id: string; email?: string; name: string; status: Status; role: Role; hasPassword?: boolean }
 type SessionOwner = { sessionId: string; userId: string; userName: string; email?: string; createdAt: string; lastActiveAt: string; title?: string; projectName?: string; gitRemote?: string; updatedAt?: number; blank?: boolean }
 type Phase = 'checking' | 'ready'
 type Section = 'dashboard' | 'users' | 'projects' | 'accounts'
@@ -16,14 +16,13 @@ type OverviewSummary = {
   userMessages: number; assistantMessages: number
   toolCalls: number; toolFailures: number; toolFailureRate: number
   modelRequests: number; inputTokens: number; outputTokens: number; totalTokens: number
-  gatewayRequests: number; gatewayTokens: number; costCny: number
   activeDurationMs: number; durationMs: number; errors: number
   commits: number; insertions: number; deletions: number
 }
-type OverviewTrend = { date: string; sessions: number; activeUsers: number; toolCalls: number; modelRequests: number; totalTokens: number }
+type OverviewTrend = { date: string; sessions: number; activeUsers: number; toolCalls: number; modelRequests: number; totalTokens: number; commits: number }
 type OverviewTool = { name: string; calls: number; failures: number; users: number }
 type OverviewModel = { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }
-type OverviewCommit = { userId: string; userName: string; commitHash: string; gitRemote?: string; subject?: string; files: number; insertions: number; deletions: number; time: number }
+type OverviewCommit = { userId?: string; userName?: string; commitHash: string; gitRemote?: string; authorName?: string; subject?: string; files: number; insertions: number; deletions: number; time: number }
 type OverviewUser = { userId: string; userName: string; sessions: number; projects: number; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number; models: OverviewModel[]; tools: Omit<OverviewTool, 'users'>[]; commits: OverviewCommit[]; insertions: number; deletions: number; lastCommitAt: number }
 type OverviewDirectory = { id: string; name: string; gitRemote: string; sessions: number; users: number; members: { userId: string; userName: string }[]; messages: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; durationMs: number; errors: number; lastActiveAt: number; models: OverviewModel[]; tools: Omit<OverviewTool, 'users'>[]; commits: OverviewCommit[]; insertions: number; deletions: number; lastCommitAt: number }
 type OverviewRecent = { sessionId: string; title: string; userId: string; userName: string; gitRemote?: string; models: { model: string; requests: number }[]; lastActiveAt: number; toolCalls: number; durationMs: number; errorCount: number }
@@ -50,25 +49,15 @@ type SyncSession = { sessionId: string; updatedAt: string; title?: string }
 type SyncUser = { userId: string; userName: string; sessions: SyncSession[]; lastSyncAt: string | null }
 type SyncStatus = { generatedAt: string; summary: { totalUsers: number; totalSessions: number; lastSyncAt: string | null }; users: SyncUser[] }
 
-// ── AI 用量类型（/team/admin/usage）──────────────────────────
-type UsageModel = { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number; costCny: number; failed: number; avgLatencyMs: number }
-type UsageUser = { userId: string; userName: string; requests: number; totalTokens: number; costCny: number }
-type UsageRow = { requestId: string; userId: string; userName: string; model: string; inputTokens: number; outputTokens: number; costCny: number; latencyMs: number; status: number; createdAt: string }
-type Usage = {
-  rangeDays: number; generatedAt: string
-  summary: { requests: number; totalTokens: number; inputTokens: number; outputTokens: number; costCny: number; failed: number; avgLatencyMs: number }
-  models: UsageModel[]; users: UsageUser[]; recent: UsageRow[]
-}
-
 // ── 项目详情类型（/team/admin/projects/:remote）──────────────
-type ProjectDetailCommit = { userId: string; userName: string; commitHash: string; gitRemote?: string; authorName?: string; authorEmail?: string; subject?: string; message?: string; changedFiles?: string[]; files: number; insertions: number; deletions: number; time: number; type: string }
+type ProjectDetailCommit = { userId?: string; userName?: string; commitHash: string; gitRemote?: string; authorName?: string; authorEmail?: string; subject?: string; message?: string; changedFiles?: string[]; files: number; insertions: number; deletions: number; time: number; type: string }
 /** Drawer 入口引用：仅携带定位信息，实际数据按需拉取。 */
 type ProjectDetailRef = { gitRemote: string; projectName?: string }
 type ProjectDetail = {
   gitRemote: string; projectName: string; rangeDays: number; generatedAt: string
   summary: { commits: number; activeDevelopers: number; activeDays: number; insertions: number; deletions: number; lastCommitAt: number; topChangedFiles: number; sessions: number; toolCalls: number; toolFailures: number; modelRequests: number; totalTokens: number; lastSessionAt: number }
   trend: { day: string; commits: number; insertions: number; deletions: number }[]
-  authors: { authorEmail: string; authorName: string; commits: number; insertions: number; deletions: number; boundUserName?: string; recentCommits: ProjectDetailCommit[] }[]
+  authors: { userId?: string; userName?: string; authorEmail: string; authorName: string; emails: string[]; commits: number; insertions: number; deletions: number; recentCommits: ProjectDetailCommit[] }[]
   commitTypes: { type: string; count: number }[]
   hotDirectories: { directory: string; count: number }[]
   models: { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }[]
@@ -79,9 +68,8 @@ type ProjectDetail = {
 // ── 用户详情类型（/team/admin/user-detail/:userId）────────────
 type UserDetail = {
   userId: string; userName: string; role: string; status: string; rangeDays: number; generatedAt: string
-  summary: { commits: number; insertions: number; deletions: number; activeDays: number; activeProjects: number; sessions: number; toolCalls: number; toolFailures: number; toolSuccessRate: number; avgTurns: number; modelRequests: number; totalTokens: number; costCny: number; lastActiveAt: number }
+  summary: { commits: number; insertions: number; deletions: number; activeDays: number; activeProjects: number; sessions: number; toolCalls: number; toolFailures: number; toolSuccessRate: number; avgTurns: number; lastActiveAt: number }
   projects: { gitRemote: string; projectName: string; commits: number; hasSessions: boolean; sessions: number; lastActiveAt: number }[]
-  models: { model: string; requests: number; inputTokens: number; outputTokens: number; costCny: number }[]
   commitTypes: { type: string; count: number }[]
   commitTrend: { day: string; commits: number; insertions: number; deletions: number }[]
   commits: ProjectDetailCommit[]
@@ -103,6 +91,16 @@ const fmt = (ms: number): string => {
 }
 const fmtNum = (n: number): string => n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 
+/** 读取接口响应；服务端异常返回空体或非 JSON 时报出状态码，而不是 JSON 解析错误。 */
+async function readJson<T>(response: Response): Promise<T & { message?: string }> {
+  const text = await response.text()
+  try {
+    return JSON.parse(text) as T & { message?: string }
+  } catch {
+    throw new Error(`服务端返回异常（HTTP ${response.status}），请查看 team-server 日志`)
+  }
+}
+
 function SessionModels({ models }: { models: OverviewRecent['models'] }) {
   if (models.length === 0) return <Typography.Text type="secondary">—</Typography.Text>
   const visible = models.slice(0, 2)
@@ -111,16 +109,17 @@ function SessionModels({ models }: { models: OverviewRecent['models'] }) {
     {models.length > visible.length && <Tag title={models.slice(visible.length).map(model => model.model).join('\n')}>+{models.length - visible.length}</Tag>}
   </Space>
 }
-/** 按日对比工具调用与模型请求。 */
+/** 按日对比研发活动：Commit / Session / 活跃开发者。 */
 function TrendChart({ data }: { data: OverviewTrend[] }) {
-  const max = Math.max(1, ...data.flatMap(d => [d.toolCalls, d.modelRequests]))
+  const max = Math.max(1, ...data.flatMap(d => [d.commits, d.sessions, d.activeUsers]))
   return <>
-    <div className="chartLegend"><span><i className="legendTool" />工具调用</span><span><i className="legendModel" />模型请求</span></div>
+    <div className="chartLegend"><span><i className="legendTool" />Commit</span><span><i className="legendModel" />Session</span><span><i className="legendDev" />活跃开发者</span></div>
     <div className="chart-trend">
       {data.map(d => <div key={d.date} className="trendGroup">
         <div className="trendBars">
-          <div className={d.toolCalls === 0 ? 'bar tool empty' : 'bar tool'} style={{ height: `${Math.max(3, Math.round(d.toolCalls / max * 100))}%` }}><span className="v">{d.toolCalls}</span></div>
-          <div className={d.modelRequests === 0 ? 'bar model empty' : 'bar model'} style={{ height: `${Math.max(3, Math.round(d.modelRequests / max * 100))}%` }}><span className="v">{d.modelRequests}</span></div>
+          <div className={d.commits === 0 ? 'bar tool empty' : 'bar tool'} style={{ height: `${Math.max(3, Math.round(d.commits / max * 100))}%` }}><span className="v">{d.commits}</span></div>
+          <div className={d.sessions === 0 ? 'bar model empty' : 'bar model'} style={{ height: `${Math.max(3, Math.round(d.sessions / max * 100))}%` }}><span className="v">{d.sessions}</span></div>
+          <div className={d.activeUsers === 0 ? 'bar dev empty' : 'bar dev'} style={{ height: `${Math.max(3, Math.round(d.activeUsers / max * 100))}%` }}><span className="v">{d.activeUsers}</span></div>
         </div>
         <span className="d">{d.date.slice(5)}</span>
       </div>)}
@@ -189,7 +188,7 @@ function AdminRoot() {
       const data = await response.json() as { users?: User[]; message?: string }
       if (response.status === 401) { window.location.replace('/team/login-page'); return }
       if (!response.ok || data.users === undefined) { void toast.error(data.message ?? '加载失败'); return }
-      setUsers(data.users); setDrafts(Object.fromEntries(data.users.map(user => [user.id, user]))); setPasswords(Object.fromEntries(data.users.map(user => [user.id, user.password ?? '']))); setPhase('ready')
+      setUsers(data.users); setDrafts(Object.fromEntries(data.users.map(user => [user.id, user]))); setPasswords(Object.fromEntries(data.users.map(user => [user.id, '']))); setPhase('ready')
     } finally { setLoading(false) }
   }
   const loadSessions = async (): Promise<void> => {
@@ -234,7 +233,7 @@ function AdminRoot() {
     { title: '账号', dataIndex: 'id', render: (id: string, user) => <Space><Avatar shape="square">{user.name.slice(0, 1)}</Avatar><Typography.Text strong>{id}</Typography.Text></Space> },
     { title: '邮箱', dataIndex: 'email', render: value => <Typography.Text type="secondary">{value ?? '—'}</Typography.Text> },
     { title: '姓名', render: (_, user) => <Input value={drafts[user.id]?.name ?? user.name} disabled={!canEdit} onChange={event => update(user.id, { name: event.target.value })} /> },
-    { title: '密码', width: 180, render: (_, user) => canEdit ? <Input.Password value={passwords[user.id] ?? user.password ?? ''} placeholder="未设置密码" onChange={event => setPasswords(current => ({ ...current, [user.id]: event.target.value }))} /> : <Typography.Text type="secondary">******</Typography.Text> },
+    { title: '密码', width: 180, render: (_, user) => canEdit ? <Input.Password value={passwords[user.id] ?? ''} placeholder={user.hasPassword ? '已设置，留空保持不变' : '未设置密码'} onChange={event => setPasswords(current => ({ ...current, [user.id]: event.target.value }))} /> : <Typography.Text type="secondary">******</Typography.Text> },
     { title: '状态', width: 145, render: (_, user) => <Select className="fieldSelect" value={drafts[user.id]?.status ?? user.status} options={statusOptions} disabled={!canEdit} onChange={(status: Status) => void save(user.id, { status })} optionRender={option => <Tag color={statusColors[option.value as Status]}>{option.label}</Tag>} /> },
     { title: '角色', width: 145, render: (_, user) => <Select className="fieldSelect" value={drafts[user.id]?.role ?? user.role} options={roleOptions} disabled={!canEdit} onChange={(role: Role) => update(user.id, { role })} /> },
     { title: '操作', width: 165, render: (_, user) => canEdit ? <Space><Button type="primary" onClick={() => void save(user.id)}>保存</Button><Popconfirm title="删除账号" description={`确定删除 ${user.id}？`} disabled={user.id === 'hahame'} onConfirm={() => void remove(user.id)}><Button danger disabled={user.id === 'hahame'}>删除</Button></Popconfirm></Space> : <Typography.Text type="secondary">仅查看</Typography.Text> },
@@ -254,7 +253,7 @@ function AdminRoot() {
     { key: 'projects' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-green" />项目</span> },
     { key: 'accounts' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-orange" />账号与权限</span> },
   ]
-  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">✦</div><div><Typography.Text strong className="aiBrandName">HiveMind · AI 研发平台</Typography.Text><Typography.Text type="secondary" className="blockText">团队智能控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={canEdit ? menuItems : [menuItems[3]!]} /><div className="siderUser"><Avatar className="aiAvatar">{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Tag className="aiStatusTag" color="blue">● 数据同步中</Tag><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardSection sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : <><AccountsPanel users={users} loading={loading} columns={columns} />{canEdit && <GitEmailsPanel />}{canEdit && <SyncStatusPanel />}</>}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
+  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">✦</div><div><Typography.Text strong className="aiBrandName">HiveMind · AI 研发平台</Typography.Text><Typography.Text type="secondary" className="blockText">团队智能控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={canEdit ? menuItems : [menuItems[3]!]} /><div className="siderUser"><Avatar className="aiAvatar">{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardSection sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : <><AccountsPanel users={users} loading={loading} columns={columns} />{canEdit && <GitEmailsPanel />}{canEdit && <SyncStatusPanel />}</>}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
 }
 
 /** 会话详情抽屉：完整指标 + 分组时间线 + 工具耗时。 */
@@ -324,7 +323,7 @@ function SessionDetailDrawer({ detail, onClose }: { detail: SessionDetail | unde
   </Drawer>
 }
 
-/** 总览：统一指标卡 + 趋势 + 用户/项目/工具/模型排行 + 最近会话。 */
+/** 总览：研发价值 KPI + 研发动态 + 研发趋势 + 成员/项目研发活动 + 最近 AI 协作。 */
 /** Git 同步日志：server 审计的提交上报记录（近 7/30 天）。 */
 function GitSyncLogPanel() {
   const [days, setDays] = useState<1 | 7 | 30>(7)
@@ -335,7 +334,7 @@ function GitSyncLogPanel() {
     let live = true
     setLoading(true); setError('')
     void fetch(`/team/admin/git-sync-log?days=${days}`).then(async response => {
-      const body = await response.json() as (typeof data) & { message?: string }
+      const body = await readJson<NonNullable<typeof data>>(response)
       if (!response.ok) throw new Error(body.message ?? '加载 Git 同步日志失败')
       if (live) setData(body)
     }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载 Git 同步日志失败') }).finally(() => { if (live) setLoading(false) })
@@ -360,7 +359,6 @@ function GitSyncLogPanel() {
 function DashboardSection({ sessions, loading, onOpenSession }: { sessions: SessionOwner[]; loading: boolean; onOpenSession: (d: SessionDetail) => void }) {
   return <Tabs className="aiTabs" defaultActiveKey="overview" items={[
     { key: 'overview', label: <span className="aiTabLabel"><i className="aiDot dot-blue" />团队总览</span>, children: <DashboardPanel onOpenSession={onOpenSession} /> },
-    { key: 'usage', label: <span className="aiTabLabel"><i className="aiDot dot-purple" />AI 用量</span>, children: <UsagePanel /> },
     { key: 'sessions', label: <span className="aiTabLabel"><i className="aiDot dot-green" />Agent 会话</span>, children: <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={onOpenSession} /> },
     { key: 'git-sync', label: <span className="aiTabLabel"><i className="aiDot dot-orange" />Git 同步</span>, children: <GitSyncLogPanel /> },
   ]} />
@@ -375,7 +373,7 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
     let live = true
     setLoading(true); setError('')
     void fetch(`/team/admin/overview?days=${days}`).then(async response => {
-      const body = await response.json() as Overview & { message?: string }
+      const body = await readJson<Overview>(response)
       if (!response.ok) throw new Error(body.message ?? '加载总览失败')
       if (live) setData(body)
     }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载总览失败') }).finally(() => { if (live) setLoading(false) })
@@ -387,38 +385,38 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
   const avgTokens = (s?.modelRequests ?? 0) === 0 ? 0 : Math.round((s?.totalTokens ?? 0) / (s?.modelRequests ?? 1))
   const avgActiveTime = (s?.sessions ?? 0) === 0 ? 0 : Math.round((s?.activeDurationMs ?? 0) / (s?.sessions ?? 1))
   const topUser = data?.users[0]
-  const topModel = data?.models[0]
   const failedTools = (data?.tools ?? []).filter(tool => tool.failures > 0)
+  const topDirectory = data?.directories[0]
+  // 研发价值导向的核心 KPI：项目/开发者/研发活动/AI 协作。
   const primaryStats = [
-    { tone: 'blue', label: '团队活跃', value: s?.activeUsers ?? 0, unit: '人', detail: `${s?.sessions ?? 0} 个会话` },
-    { tone: 'purple', label: 'AI 消耗', value: fmtNum(s?.totalTokens ?? 0), unit: 'Token', detail: `${s?.modelRequests ?? 0} 次模型请求` },
-    { tone: toolSuccessRate < 95 ? 'orange' : 'green', label: '工具成功率', value: `${toolSuccessRate}%`, unit: '', detail: `${s?.toolCalls ?? 0} 次调用 · ${s?.toolFailures ?? 0} 次失败` },
-    { tone: (s?.errors ?? 0) > 0 ? 'red' : 'green', label: '运行健康', value: s?.errors ?? 0, unit: '错误', detail: (s?.errors ?? 0) > 0 ? '存在需要关注的异常' : '当前范围内运行正常' },
+    { tone: 'blue', label: '活跃项目', value: s?.projects ?? 0, unit: '个', detail: '正在研发的 Git 项目' },
+    { tone: 'purple', label: '活跃开发者', value: s?.activeUsers ?? 0, unit: '人', detail: topUser === undefined ? '' : `涉及 ${s?.projects ?? 0} 个项目` },
+    { tone: 'green', label: '研发活动', value: s?.commits ?? 0, unit: 'Commits', detail: `+${s?.insertions ?? 0} / -${s?.deletions ?? 0}` },
+    { tone: 'cyan', label: 'AI 协作', value: s?.sessions ?? 0, unit: 'Sessions', detail: `${s?.toolCalls ?? 0} 次工具调用` },
   ]
   const secondaryStats = [
-    { label: '活跃项目', value: String(s?.projects ?? 0), detail: 'Git 远程仓库' },
-    { label: 'Git 提交', value: String(s?.commits ?? 0), detail: `+${s?.insertions ?? 0} / -${s?.deletions ?? 0}` },
+    { label: 'AI 消耗', value: fmtNum(s?.totalTokens ?? 0), detail: `${s?.modelRequests ?? 0} 次模型请求` },
+    { label: '工具成功率', value: `${toolSuccessRate}%`, detail: `${s?.toolFailures ?? 0} 次失败` },
     { label: '对话消息', value: String((s?.userMessages ?? 0) + (s?.assistantMessages ?? 0)), detail: `${s?.userMessages ?? 0} 用户 · ${s?.assistantMessages ?? 0} 助手` },
     { label: '平均请求消耗', value: fmtNum(avgTokens), detail: 'Token / 请求' },
-    { label: 'AI 成本', value: fmtCny(s?.costCny ?? 0), detail: `网关 ${s?.gatewayRequests ?? 0} 次请求` },
     { label: '平均会话活跃', value: fmt(avgActiveTime), detail: `累计 ${fmt(s?.activeDurationMs ?? 0)}` },
   ]
   const userColumns: ColumnsType<OverviewUser> = [
     { title: '成员', render: (_, u) => <Space><Avatar shape="square">{u.userName.slice(0, 1)}</Avatar><Typography.Text strong>{u.userName}</Typography.Text><Typography.Text type="secondary">{u.userId}</Typography.Text></Space> },
-    { title: '会话', dataIndex: 'sessions', width: 70 },
-    { title: '工具', dataIndex: 'toolCalls', width: 90 },
-    { title: '失败', dataIndex: 'toolFailures', width: 70, render: v => v === 0 ? <Tag color="green">0</Tag> : <Tag color="red">{v}</Tag> },
-    { title: '模型请求', dataIndex: 'modelRequests', width: 90 },
-    { title: 'Token', dataIndex: 'totalTokens', width: 100, render: v => fmtNum(v) },
-    { title: '时长', width: 90, render: (_, u) => fmt(u.durationMs) },
+    { title: '参与项目', dataIndex: 'projects', width: 80 },
+    { title: 'Commit', width: 70, render: (_, u) => u.commits.length || '—' },
+    { title: '代码变更', width: 110, render: (_, u) => u.commits.length === 0 ? '—' : <span><Typography.Text type="success">+{u.insertions}</Typography.Text> <Typography.Text type="danger">-{u.deletions}</Typography.Text></span> },
+    { title: 'AI Session', dataIndex: 'sessions', width: 85 },
+    { title: 'AI 工具调用', dataIndex: 'toolCalls', width: 90 },
+    { title: '最近活跃', width: 130, render: (_, u) => u.lastActiveAt === 0 ? '—' : <Typography.Text type="secondary">{new Date(u.lastActiveAt).toLocaleDateString()}</Typography.Text> },
   ]
   const dirColumns: ColumnsType<OverviewDirectory> = [
     { title: '项目', render: (_, d) => <div><Typography.Text strong>{d.name}</Typography.Text><Typography.Text code copyable={{ text: d.gitRemote }} type="secondary" className="blockText">{d.gitRemote}</Typography.Text></div> },
-    { title: '会话', dataIndex: 'sessions', width: 70 },
-    { title: '用户', dataIndex: 'users', width: 70 },
-    { title: '工具', dataIndex: 'toolCalls', width: 90 },
-    { title: '模型请求', dataIndex: 'modelRequests', width: 90 },
-    { title: 'Token', dataIndex: 'totalTokens', width: 100, render: v => fmtNum(v) },
+    { title: 'Commits', width: 80, render: (_, d) => d.commits.length || '—' },
+    { title: '活跃开发者', dataIndex: 'users', width: 90 },
+    { title: '代码变更', width: 110, render: (_, d) => d.commits.length === 0 ? '—' : <span><Typography.Text type="success">+{d.insertions}</Typography.Text> <Typography.Text type="danger">-{d.deletions}</Typography.Text></span> },
+    { title: 'AI Sessions', dataIndex: 'sessions', width: 90 },
+    { title: '最近活跃', width: 130, render: (_, d) => d.lastActiveAt === 0 ? '—' : <Typography.Text type="secondary">{new Date(d.lastActiveAt).toLocaleDateString()}</Typography.Text> },
   ]
   const toolColumns: ColumnsType<OverviewTool> = [
     { title: '工具', dataIndex: 'name' },
@@ -435,14 +433,12 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
     { title: '总 Token', dataIndex: 'totalTokens', width: 110, render: v => fmtNum(v) },
   ]
   const recentColumns: ColumnsType<OverviewRecent> = [
-    { title: '会话', width: 300, render: (_, r) => <div><Typography.Text strong>{r.title}</Typography.Text><Typography.Text code copyable={{ text: r.sessionId }} type="secondary" className="blockText">{r.sessionId.slice(0, 20)}</Typography.Text></div> },
-    { title: '成员', width: 140, render: (_, r) => r.userName },
-    { title: '项目', dataIndex: 'gitRemote', ellipsis: true, render: v => v === undefined ? '未关联 Git 项目' : <Typography.Text code copyable={{ text: v }} ellipsis={{ tooltip: v }}>{v}</Typography.Text> },
-    { title: '模型', width: 230, render: (_, r) => <SessionModels models={r.models ?? []} /> },
-    { title: '工具', dataIndex: 'toolCalls', width: 80 },
-    { title: '最后活跃', dataIndex: 'lastActiveAt', width: 170, render: v => new Date(v).toLocaleString() },
-    { title: '时长', width: 90, render: (_, r) => fmt(r.durationMs) },
-    { title: '错误', dataIndex: 'errorCount', width: 70, render: v => v === 0 ? '—' : <Tag color="red">{v}</Tag> },
+    { title: '任务', width: 240, render: (_, r) => <div><Typography.Text strong>{r.title}</Typography.Text><Typography.Text code copyable={{ text: r.sessionId }} type="secondary" className="blockText">{r.sessionId.slice(0, 20)}</Typography.Text></div> },
+    { title: '项目', width: 180, render: (_, r) => r.gitRemote === undefined ? '未关联' : <Typography.Text ellipsis={{ tooltip: r.gitRemote }} style={{ maxWidth: 170, display: 'inline-block' }}>{r.gitRemote.split('/').at(-1)?.replace(/\.git$/, '')}</Typography.Text> },
+    { title: '成员', width: 120, render: (_, r) => r.userName },
+    { title: 'AI 操作', width: 110, render: (_, r) => `${r.toolCalls} 次工具` },
+    { title: '状态', width: 90, render: (_, r) => r.errorCount > 0 ? <Tag color="red">异常</Tag> : <Tag color="green">完成</Tag> },
+    { title: '时间', width: 130, render: (_, r) => <Typography.Text type="secondary">{new Date(r.lastActiveAt).toLocaleString()}</Typography.Text> },
     { title: '操作', width: 90, render: (_, r) => <Button type="link" onClick={() => void openDetail(r.sessionId, onOpenSession)}>详情</Button> },
   ]
   return <Space direction="vertical" size={18} className="analyticsPage">
@@ -454,27 +450,37 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
       <div className="secondaryMetrics">{secondaryStats.map(item => <div key={item.label}><Typography.Text type="secondary">{item.label}</Typography.Text><strong>{item.value}</strong><span>{item.detail}</span></div>)}</div>
     </section>
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
+    <section className="devSummary">
+      <div className="devSummaryHead"><Typography.Text className="eyebrow">本周期研发动态</Typography.Text><Typography.Text type="secondary">近 {days} 天 · 由 Git/Session 统计生成</Typography.Text></div>
+      <div className="devSummaryText">
+        <Typography.Text>本周期共产生 <strong>{s?.commits ?? 0}</strong> 次提交，研发活动集中在 <strong>{s?.projects ?? 0}</strong> 个项目、<strong>{s?.activeUsers ?? 0}</strong> 名开发者。</Typography.Text>
+        {topDirectory !== undefined && <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>{topDirectory.name} 持续活跃，共 {topDirectory.commits.length} 次提交、{topDirectory.users} 名开发者参与。</Typography.Paragraph>}
+      </div>
+      <div className="devSummaryPoints">
+        {topUser !== undefined && <div><i className="aiDot dot-blue" /><span>研发活动主要集中于 <strong>{topUser.userName}</strong>（{topUser.commits.length} Commits）</span></div>}
+        {failedTools.length > 0 && <div><i className="aiDot dot-red" /><span>Agent 工具 <strong>{failedTools.map(t => t.name).slice(0, 2).join('、')}</strong> 出现 {failedTools.reduce((sum, t) => sum + t.failures, 0)} 次失败</span></div>}
+        {(s?.errors ?? 0) > 0 && <div><i className="aiDot dot-orange" /><span>存在 <strong>{s?.errors}</strong> 个 Agent 异常需关注</span></div>}
+      </div>
+    </section>
     <Row gutter={[16, 16]}>
-      <Col xs={24} xl={16}><Card title="活动趋势" extra={<Typography.Text type="secondary">按日对比</Typography.Text>} className="analyticsCard trendCard">{loading ? <Card loading /> : <TrendChart data={data?.trends ?? []} />}</Card></Col>
-      <Col xs={24} xl={8}><Card title="运行健康" className="analyticsCard healthCard" extra={<span className={`healthBadge ${(s?.errors ?? 0) > 0 || failedTools.length > 0 ? 'warn' : 'ok'}`}>{(s?.errors ?? 0) > 0 || failedTools.length > 0 ? '需关注' : '状态良好'}</span>}>
+      <Col xs={24} xl={16}><Card title="研发活动趋势" extra={<Typography.Text type="secondary">Commit · Session · 活跃开发者</Typography.Text>} className="analyticsCard trendCard">{loading ? <Card loading /> : <TrendChart data={data?.trends ?? []} />}</Card></Col>
+      <Col xs={24} xl={8}><Card title="运行健康" className="analyticsCard healthCard" extra={<span className={`healthBadge ${(s?.errors ?? 0) > 0 || failedTools.length > 0 ? 'warn' : 'ok'}`}>{(s?.errors ?? 0) > 0 || failedTools.length > 0 ? '需关注' : '正常'}</span>}>
         <div className="healthList">
-          <div><span>错误事件</span><strong className={(s?.errors ?? 0) > 0 ? 'dangerText' : ''}>{s?.errors ?? 0}</strong></div>
-          <div><span>异常工具种类</span><strong className={failedTools.length > 0 ? 'warningText' : ''}>{failedTools.length}</strong></div>
-          <div><span>主要模型</span><strong title={topModel?.model}>{topModel?.model ?? '—'}</strong></div>
-          <div><span>最活跃成员</span><strong>{topUser === undefined ? '—' : `${topUser.userName} · ${fmtNum(topUser.totalTokens)}`}</strong></div>
+          <div><span>Agent 异常</span><strong className={(s?.errors ?? 0) > 0 ? 'dangerText' : ''}>{s?.errors ?? 0}</strong></div>
+          <div><span>Tool 失败</span><strong className={(s?.toolFailures ?? 0) > 0 ? 'warningText' : ''}>{s?.toolFailures ?? 0}</strong></div>
         </div>
         <div className="healthFoot">更新于 {data?.generatedAt === undefined ? '—' : new Date(data.generatedAt).toLocaleTimeString()}</div>
       </Card></Col>
     </Row>
-    <Card title="最近会话" extra={<Typography.Text type="secondary">优先查看错误与最新活动</Typography.Text>} className="analyticsCard"><Table rowKey="sessionId" loading={loading} size="middle" columns={recentColumns} dataSource={[...(data?.recentSessions ?? [])].sort((a, b) => b.errorCount - a.errorCount || b.lastActiveAt - a.lastActiveAt)} pagination={{ pageSize: 6, showSizeChanger: false }} scroll={{ x: 1230 }} /></Card>
+    <Card title="最近 AI 协作" extra={<Typography.Text type="secondary">优先查看异常与最新活动</Typography.Text>} className="analyticsCard"><Table rowKey="sessionId" loading={loading} size="middle" columns={recentColumns} dataSource={[...(data?.recentSessions ?? [])].sort((a, b) => b.errorCount - a.errorCount || b.lastActiveAt - a.lastActiveAt)} pagination={{ pageSize: 6, showSizeChanger: false }} /></Card>
     <Row gutter={[16, 16]}>
-      <Col xs={24} xl={12}><Card title="成员贡献" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
-      <HBarChart rows={(data?.users ?? []).map(u => ({ label: u.userName, value: u.totalTokens, display: `${fmtNum(u.totalTokens)} · ${u.sessions} 会话` }))} />
-      <Table rowKey="userId" loading={loading} columns={userColumns} dataSource={data?.users ?? []} pagination={false} scroll={{ x: 800 }} />
+      <Col xs={24} xl={12}><Card title="成员研发活动" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
+      <HBarChart rows={(data?.users ?? []).map(u => ({ label: u.userName, value: u.commits.length, display: `${u.commits.length} Commits · ${u.sessions} Sessions` }))} />
+      <Table rowKey="userId" loading={loading} columns={userColumns} dataSource={data?.users ?? []} pagination={false} />
     </Space></Card></Col>
       <Col xs={24} xl={12}><Card title="活跃项目" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
-      <HBarChart color="purple" rows={(data?.directories ?? []).map(d => ({ label: d.name, value: d.sessions, display: `${d.sessions} 会话 · ${d.users} 人` }))} />
-      <Table rowKey="id" loading={loading} size="middle" columns={dirColumns} dataSource={data?.directories ?? []} pagination={{ pageSize: 6, showSizeChanger: false }} scroll={{ x: 800 }} />
+      <HBarChart color="purple" rows={(data?.directories ?? []).map(d => ({ label: d.name, value: d.commits.length, display: `${d.commits.length} Commits · ${d.users} 人` }))} />
+      <Table rowKey="id" loading={loading} size="middle" columns={dirColumns} dataSource={data?.directories ?? []} pagination={{ pageSize: 6, showSizeChanger: false }} />
     </Space></Card></Col>
     </Row>
     <Row gutter={[16, 16]}>
@@ -487,74 +493,6 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
         <Table rowKey="model" loading={loading} size="middle" columns={modelColumns} dataSource={data?.models ?? []} pagination={false} />
       </Space></Card></Col>
     </Row>
-  </Space>
-}
-
-const fmtCny = (value: number): string => value >= 1 ? `¥${value.toFixed(2)}` : value === 0 ? '¥0.00' : `¥${value.toFixed(4)}`
-
-/** AI 用量页：网关采集的模型请求/Token/成本，按模型与用户分布。 */
-function UsagePanel() {
-  const [days, setDays] = useState<1 | 7 | 30>(7)
-  const [data, setData] = useState<Usage>()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    let live = true
-    setLoading(true); setError('')
-    void fetch(`/team/admin/usage?days=${days}`).then(async response => {
-      const body = await response.json() as Usage & { message?: string }
-      if (!response.ok) throw new Error(body.message ?? '加载 AI 用量失败')
-      if (live) setData(body)
-    }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载 AI 用量失败') }).finally(() => { if (live) setLoading(false) })
-    return () => { live = false }
-  }, [days])
-
-  const s = data?.summary
-  const stats = [
-    { label: '模型请求', value: String(s?.requests ?? 0), detail: `${s?.failed ?? 0} 次失败` },
-    { label: '总 Token', value: fmtNum(s?.totalTokens ?? 0), detail: `输入 ${fmtNum(s?.inputTokens ?? 0)} · 输出 ${fmtNum(s?.outputTokens ?? 0)}` },
-    { label: '成本（估算）', value: fmtCny(s?.costCny ?? 0), detail: '按模型官方价计算' },
-    { label: '平均延迟', value: s === undefined ? '—' : fmt(s.avgLatencyMs), detail: '网关到模型耗时' },
-  ]
-  const modelColumns: ColumnsType<UsageModel> = [
-    { title: '模型', dataIndex: 'model', ellipsis: true },
-    { title: '请求', dataIndex: 'requests', width: 90 },
-    { title: '输入 Token', dataIndex: 'inputTokens', width: 120, render: v => fmtNum(v) },
-    { title: '输出 Token', dataIndex: 'outputTokens', width: 120, render: v => fmtNum(v) },
-    { title: '总 Token', dataIndex: 'totalTokens', width: 120, render: v => fmtNum(v) },
-    { title: '成本', dataIndex: 'costCny', width: 100, render: v => fmtCny(v) },
-    { title: '失败', dataIndex: 'failed', width: 80, render: v => v === 0 ? '—' : <Tag color="red">{v}</Tag> },
-  ]
-  const userColumns: ColumnsType<UsageUser> = [
-    { title: '成员', render: (_, u) => <Space><Avatar shape="square">{u.userName.slice(0, 1)}</Avatar><Typography.Text strong>{u.userName}</Typography.Text><Typography.Text type="secondary">{u.userId}</Typography.Text></Space> },
-    { title: '请求', dataIndex: 'requests', width: 90 },
-    { title: '总 Token', dataIndex: 'totalTokens', width: 120, render: v => fmtNum(v) },
-    { title: '成本', dataIndex: 'costCny', width: 100, render: v => fmtCny(v) },
-  ]
-  const recentColumns: ColumnsType<UsageRow> = [
-    { title: '时间', dataIndex: 'createdAt', width: 180, render: v => new Date(v).toLocaleString() },
-    { title: '成员', width: 130, render: (_, r) => r.userName },
-    { title: '模型', dataIndex: 'model', ellipsis: true },
-    { title: '输入', dataIndex: 'inputTokens', width: 90, render: v => fmtNum(v) },
-    { title: '输出', dataIndex: 'outputTokens', width: 90, render: v => fmtNum(v) },
-    { title: '成本', dataIndex: 'costCny', width: 100, render: v => fmtCny(v) },
-    { title: '延迟', width: 90, render: (_, r) => fmt(r.latencyMs) },
-    { title: '状态', width: 80, render: (_, r) => r.status >= 400 ? <Tag color="red">{r.status}</Tag> : <Tag color="green">{r.status}</Tag> },
-  ]
-  return <Space direction="vertical" size={18} className="analyticsPage">
-    <DimensionToolbar days={days} onChange={setDays} />
-    {error && <Alert type="error" showIcon message={error} />}
-    <Row gutter={[16, 16]} className="analyticsStats">
-      {stats.map(stat => <Col key={stat.label} xs={12} lg={6}><Card loading={loading}><Statistic title={stat.label} value={stat.value} /><Typography.Text type="secondary">{stat.detail}</Typography.Text></Card></Col>)}
-    </Row>
-    <Row gutter={[16, 16]}>
-      <Col xs={24} xl={14}><Card title="模型用量与成本" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
-        <HBarChart color="purple" rows={(data?.models ?? []).map(m => ({ label: m.model, value: m.totalTokens, display: `${m.requests} 请求 · ${fmtCny(m.costCny)}` }))} />
-        <Table rowKey="model" loading={loading} size="middle" columns={modelColumns} dataSource={data?.models ?? []} pagination={false} scroll={{ x: 800 }} />
-      </Space></Card></Col>
-      <Col xs={24} xl={10}><Card title="成员 AI 消耗" className="analyticsCard"><Table rowKey="userId" loading={loading} size="middle" columns={userColumns} dataSource={data?.users ?? []} pagination={false} /></Card></Col>
-    </Row>
-    <Card title="最近模型请求" extra={<Typography.Text type="secondary">网关记录 · 非会话内 Token 统计</Typography.Text>} className="analyticsCard"><Table rowKey="requestId" loading={loading} size="middle" columns={recentColumns} dataSource={data?.recent ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1000 }} /></Card>
   </Space>
 }
 
@@ -574,7 +512,7 @@ function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | u
     let live = true
     setLoading(true); setError('')
     void fetch(`/team/admin/projects/${encodeURIComponent(detail.gitRemote)}?days=${days}`).then(async response => {
-      const body = await response.json() as ProjectDetail & { message?: string }
+      const body = await readJson<ProjectDetail>(response)
       if (!response.ok) throw new Error(body.message ?? '加载项目详情失败')
       if (live) setData(body)
     }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载项目详情失败') }).finally(() => { if (live) setLoading(false) })
@@ -644,8 +582,8 @@ function ProjectDetailDrawer({ detail, onClose }: { detail: ProjectDetailRef | u
         </Card></Col>
         <Col xs={24} xl={12}><Card size="small" title="作者分布与提交" extra={<Typography.Text type="secondary">展开作者查看其提交</Typography.Text>}>
           <Collapse className="aiGroupCollapse" items={(data?.authors ?? []).map(author => ({
-            key: author.authorEmail,
-            label: <span className="aiGroupLabel"><Avatar shape="square" size="small" className="aiAvatar">{author.authorName.slice(0, 1)}</Avatar><strong>{author.authorName}</strong>{author.boundUserName !== undefined && <Tag color="green" style={{ marginLeft: 4 }}>{author.boundUserName}</Tag>}<Tag>{author.commits} 提交</Tag><Typography.Text type="secondary">+{author.insertions} / -{author.deletions}</Typography.Text></span>,
+            key: author.userId ?? author.authorEmail,
+            label: <span className="aiGroupLabel"><Avatar shape="square" size="small" className="aiAvatar">{author.authorName.slice(0, 1)}</Avatar><strong>{author.userName ?? author.authorName}</strong>{author.userId !== undefined && <Tag color="green" style={{ marginLeft: 4 }}>已绑定</Tag>}<Tag>{author.commits} 提交</Tag><Typography.Text type="secondary">+{author.insertions} / -{author.deletions}</Typography.Text></span>,
             children: author.recentCommits.length === 0
               ? <Empty description="该窗口内暂无此作者提交详情" image={Empty.PRESENTED_IMAGE_SIMPLE} />
               : <Table rowKey="commitHash" size="small" columns={authorCommitColumns} dataSource={author.recentCommits} pagination={false} />,
@@ -670,7 +608,7 @@ function UserDetailDrawer({ detail, onClose }: { detail: UserDetailRef | undefin
     let live = true
     setError('')
     void fetch(`/team/admin/user-detail/${encodeURIComponent(detail.userId)}?days=${days}`).then(async response => {
-      const body = await response.json() as UserDetail & { message?: string }
+      const body = await readJson<UserDetail>(response)
       if (!response.ok) throw new Error(body.message ?? '加载用户详情失败')
       if (live) setData(body)
     }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载用户详情失败') })
@@ -732,18 +670,27 @@ function UserDetailDrawer({ detail, onClose }: { detail: UserDetailRef | undefin
         <Tag color={statusMeta[data?.status ?? '']?.color ?? 'default'}>{statusMeta[data?.status ?? '']?.label ?? data?.status ?? '—'}</Tag>
         {(s?.lastActiveAt ?? 0) > 0 && <Tag color="blue">最近活跃 {new Date(s!.lastActiveAt!).toLocaleDateString()}</Tag>}
       </Space>
+      <section className="devSummary">
+        <div className="devSummaryHead"><Typography.Text className="eyebrow">用户研发概况</Typography.Text><Typography.Text type="secondary">近 {days} 天 · 由 Git/Session 统计生成</Typography.Text></div>
+        <div className="devSummaryText">
+          <Typography.Text>{data?.userName ?? '该开发者'} 近 {days} 天共产生 <strong>{s?.commits ?? 0}</strong> 次提交、参与 <strong>{s?.activeProjects ?? 0}</strong> 个项目，代码变更 <strong>+{s?.insertions ?? 0} / -{s?.deletions ?? 0}</strong>。</Typography.Text>
+        </div>
+        <div className="devSummaryPoints">
+          {data?.projects !== undefined && data.projects.length > 0 && <div><i className="aiDot dot-blue" /><span>主要参与 <strong>{data.projects.map(p => p.projectName).slice(0, 3).join('、')}</strong></span></div>}
+          {(s?.sessions ?? 0) > 0 && <div><i className="aiDot dot-purple" /><span>通过 <strong>{s?.sessions}</strong> 次 AI Session 协作，共 {s?.toolCalls ?? 0} 次工具调用</span></div>}
+          {(s?.toolFailures ?? 0) > 0 && <div><i className="aiDot dot-red" /><span>工具 <strong>{s?.toolFailures}</strong> 次失败需关注</span></div>}
+        </div>
+      </section>
       <Row gutter={[12, 12]} className="trajectoryMetrics" style={{ borderRadius: 14 }}>
         <div><span>研发提交</span><strong>{s?.commits ?? 0}</strong><small>近 {days} 天</small></div>
         <div><span>代码增删</span><strong>+{s?.insertions ?? 0} / -{s?.deletions ?? 0}</strong><small>近 {days} 天</small></div>
         <div><span>参与项目</span><strong>{s?.activeProjects ?? 0}</strong><small>有提交的项目</small></div>
         <div><span>活跃天数</span><strong>{s?.activeDays ?? 0}</strong><small>有提交的天数</small></div>
-        <div><span>AI 成本</span><strong>{fmtCny(s?.costCny ?? 0)}</strong><small>{s === undefined ? '' : `${fmtNum(s.totalTokens)} Token · ${s.modelRequests} 请求`}</small></div>
       </Row>
       <Row gutter={[12, 12]} className="trajectoryMetrics" style={{ borderRadius: 14 }}>
         <div><span>Session</span><strong>{s?.sessions ?? 0}</strong><small>{s === undefined || s.toolCalls === 0 ? '无工具活动' : `${s.toolCalls} 次工具调用`}</small></div>
         <div><span>工具成功率</span><strong>{s === undefined || s.toolCalls === 0 ? '—' : `${s.toolSuccessRate}%`}</strong><small>{s === undefined || s.toolFailures === 0 ? '全部成功' : `${s.toolFailures} 次失败`}</small></div>
         <div><span>平均轮次</span><strong>{s?.avgTurns ?? 0}</strong><small>每会话平均</small></div>
-        <div><span>模型请求</span><strong>{s?.modelRequests ?? 0}</strong><small>网关记录</small></div>
         <div><span>最近活跃</span><strong>{(s?.lastActiveAt ?? 0) === 0 ? '—' : new Date(s?.lastActiveAt ?? 0).toLocaleDateString()}</strong><small>提交或会话</small></div>
       </Row>
       <Row gutter={[12, 12]}>
@@ -752,7 +699,6 @@ function UserDetailDrawer({ detail, onClose }: { detail: UserDetailRef | undefin
       </Row>
       <Row gutter={[12, 12]}>
         <Col xs={24} xl={10}><Card size="small" title="参与项目"><Table rowKey="gitRemote" size="small" pagination={false} dataSource={data?.projects ?? []} locale={{ emptyText: '统计范围内无提交' }} columns={projectColumns} /></Card></Col>
-        <Col xs={24} xl={14}><Card size="small" title="AI 用量（网关记录）"><Table rowKey="model" size="small" pagination={false} dataSource={data?.models ?? []} locale={{ emptyText: '统计范围内无模型请求' }} columns={[{ title: '模型', dataIndex: 'model', ellipsis: true }, { title: '请求', dataIndex: 'requests', width: 80 }, { title: '输入 Token', width: 100, dataIndex: 'inputTokens', render: fmtNum }, { title: '输出 Token', width: 100, dataIndex: 'outputTokens', render: fmtNum }, { title: '成本', width: 100, dataIndex: 'costCny', render: fmtCny }]} /></Card></Col>
       </Row>
       <Card size="small" title="最近提交" extra={<Typography.Text type="secondary">按项目分组</Typography.Text>}>
         {projectGroups.length === 0 ? <Empty description="统计范围内无提交" /> : <Collapse className="aiGroupCollapse" defaultActiveKey={projectGroups.slice(0, 1).map(group => group.key)} items={projectGroups.map(group => ({
@@ -774,7 +720,7 @@ function useOverview(days: 1 | 7 | 30): { data?: Overview; loading: boolean; err
     let live = true
     setLoading(true); setError('')
     void fetch(`/team/admin/overview?days=${days}`).then(async response => {
-      const body = await response.json() as Overview & { message?: string }
+      const body = await readJson<Overview>(response)
       if (!response.ok) throw new Error(body.message ?? '加载数据失败')
       if (live) setData(body)
     }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载数据失败') }).finally(() => { if (live) setLoading(false) })
@@ -828,7 +774,7 @@ function DimensionDetail({
   ]
   const commitColumns: ColumnsType<OverviewCommit> = [
     { title: '提交', render: (_, commit) => <div><Typography.Text strong>{commit.subject ?? '未记录提交说明'}</Typography.Text><Typography.Text code copyable type="secondary" className="blockText">{commit.commitHash.slice(0, 12)}</Typography.Text></div> },
-    { title: '成员', dataIndex: 'userName', width: 120 },
+    { title: '成员', width: 120, render: (_, commit) => commit.userName ?? commit.authorName ?? '未绑定' },
     { title: '文件', dataIndex: 'files', width: 70 },
     { title: '代码增删', width: 120, render: (_, commit) => <span><Typography.Text type="success">+{commit.insertions}</Typography.Text> <Typography.Text type="danger">-{commit.deletions}</Typography.Text></span> },
     { title: '时间', dataIndex: 'time', width: 180, render: value => new Date(value).toLocaleString() },
@@ -849,22 +795,21 @@ function UserDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =>
   const [userDetail, setUserDetail] = useState<UserDetailRef>()
   const columns: ColumnsType<OverviewUser> = [
     { title: '用户', render: (_, user) => <Space><Avatar shape="square">{user.userName.slice(0, 1)}</Avatar><div><Typography.Text strong>{user.userName}</Typography.Text><Typography.Text type="secondary" className="blockText">{user.userId}</Typography.Text></div></Space> },
-    { title: '项目', dataIndex: 'projects', width: 75 },
-    { title: '会话', dataIndex: 'sessions', width: 75 },
-    { title: '提交', width: 75, render: (_, user) => user.commits.length || '—' },
-    { title: '代码增删', width: 120, render: (_, user) => user.commits.length === 0 ? '—' : <span><Typography.Text type="success">+{user.insertions}</Typography.Text> <Typography.Text type="danger">-{user.deletions}</Typography.Text></span> },
-    { title: '消息', dataIndex: 'messages', width: 75 },
-    { title: '模型请求', dataIndex: 'modelRequests', width: 100 },
-    { title: 'Token', dataIndex: 'totalTokens', width: 110, render: fmtNum },
-    { title: '工具成功率', width: 110, render: (_, user) => user.toolCalls === 0 ? '—' : `${Math.round((user.toolCalls - user.toolFailures) / user.toolCalls * 1000) / 10}%` },
-    { title: '活跃时长', width: 100, render: (_, user) => fmt(user.durationMs) },
-    { title: '最后活跃', dataIndex: 'lastActiveAt', width: 180, render: value => value === 0 ? '—' : new Date(value).toLocaleString() },
+    { title: '参与项目', dataIndex: 'projects', width: 80 },
+    { title: 'Commit', width: 70, render: (_, user) => user.commits.length || '—' },
+    { title: '代码变更', width: 110, render: (_, user) => user.commits.length === 0 ? '—' : <span><Typography.Text type="success">+{user.insertions}</Typography.Text> <Typography.Text type="danger">-{user.deletions}</Typography.Text></span> },
+    { title: 'AI Session', dataIndex: 'sessions', width: 85 },
+    { title: 'AI 工具调用', dataIndex: 'toolCalls', width: 90 },
+    { title: '最近活跃', width: 130, render: (_, user) => user.lastActiveAt === 0 ? '—' : <Typography.Text type="secondary">{new Date(user.lastActiveAt).toLocaleDateString()}</Typography.Text> },
     { title: '操作', width: 90, render: (_, user) => <Button type="link" onClick={() => setUserDetail({ userId: user.userId, userName: user.userName })}>详情</Button> },
   ]
   const totalTokens = data?.users.reduce((sum, user) => sum + user.totalTokens, 0) ?? 0
+  const totalCommits = data?.users.reduce((sum, user) => sum + user.commits.length, 0) ?? 0
+  const totalSessions = data?.users.reduce((sum, user) => sum + user.sessions, 0) ?? 0
+  const totalProjects = new Set(data?.users.flatMap(user => user.commits.map(c => c.gitRemote))).size
   return <Space direction="vertical" size={18} className="analyticsPage"><DimensionToolbar days={days} onChange={setDays} />{error && <Alert type="error" showIcon message={error} />}
-    <Row gutter={[16, 16]} className="analyticsStats"><Col xs={12} lg={6}><Card loading={loading}><Statistic title="活跃用户" value={data?.users.length ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="用户会话" value={data?.users.reduce((sum, user) => sum + user.sessions, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="模型请求" value={data?.users.reduce((sum, user) => sum + user.modelRequests, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Token" value={fmtNum(totalTokens)} /></Card></Col></Row>
-    <Card title="用户使用情况" className="analyticsCard"><Table rowKey="userId" loading={loading} columns={columns} dataSource={data?.users ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1350 }} expandable={{ expandedRowRender: user => <DimensionDetail models={user.models} tools={user.tools} commits={user.commits} sessions={(data?.recentSessions ?? []).filter(session => session.userId === user.userId)} onOpenSession={onOpenSession} /> }} /></Card>
+    <Row gutter={[16, 16]} className="analyticsStats"><Col xs={12} lg={6}><Card loading={loading}><Statistic title="参与项目" value={totalProjects} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Commit" value={totalCommits} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="AI Sessions" value={totalSessions} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Token" value={fmtNum(totalTokens)} /></Card></Col></Row>
+    <Card title="成员研发活动" className="analyticsCard"><Table rowKey="userId" loading={loading} columns={columns} dataSource={data?.users ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} expandable={{ expandedRowRender: user => <DimensionDetail models={user.models} tools={user.tools} commits={user.commits} sessions={(data?.recentSessions ?? []).filter(session => session.userId === user.userId)} onOpenSession={onOpenSession} /> }} /></Card>
     <UserDetailDrawer detail={userDetail} onClose={() => setUserDetail(undefined)} />
   </Space>
 }
@@ -891,7 +836,7 @@ function ProjectDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail)
   const activeMembers = new Set((data?.directories ?? []).flatMap(project => project.members.map(member => member.userId))).size
   return <Space direction="vertical" size={18} className="analyticsPage"><DimensionToolbar days={days} onChange={setDays} />{error && <Alert type="error" showIcon message={error} />}
     <Row gutter={[16, 16]} className="analyticsStats"><Col xs={12} lg={6}><Card loading={loading}><Statistic title="活跃项目" value={data?.directories.length ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="参与成员" value={activeMembers} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="项目会话" value={data?.directories.reduce((sum, project) => sum + project.sessions, 0) ?? 0} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Token" value={fmtNum(data?.directories.reduce((sum, project) => sum + project.totalTokens, 0) ?? 0)} /></Card></Col></Row>
-    <Card title="Git 项目使用情况" className="analyticsCard"><Table rowKey="id" loading={loading} columns={columns} dataSource={data?.directories ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1450 }} expandable={{ expandedRowRender: project => <Space direction="vertical" size={14} style={{ width: '100%' }}><Space wrap><Typography.Text type="secondary">参与成员</Typography.Text>{project.members.map(member => <Tag key={member.userId}>{member.userName}</Tag>)}</Space><DimensionDetail models={project.models} tools={project.tools} commits={project.commits} sessions={(data?.recentSessions ?? []).filter(session => session.gitRemote === project.id)} onOpenSession={onOpenSession} /></Space> }} /></Card>
+    <Card title="Git 项目使用情况" className="analyticsCard"><Table rowKey="id" loading={loading} columns={columns} dataSource={data?.directories ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} expandable={{ expandedRowRender: project => <Space direction="vertical" size={14} style={{ width: '100%' }}><Space wrap><Typography.Text type="secondary">参与成员</Typography.Text>{project.members.map(member => <Tag key={member.userId}>{member.userName}</Tag>)}</Space><DimensionDetail models={project.models} tools={project.tools} commits={project.commits} sessions={(data?.recentSessions ?? []).filter(session => session.gitRemote === project.id)} onOpenSession={onOpenSession} /></Space> }} /></Card>
     <ProjectDetailDrawer detail={projectDetail} onClose={() => setProjectDetail(undefined)} />
   </Space>
 }
@@ -899,7 +844,7 @@ function ProjectDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail)
 async function openDetail(sessionId: string, onOpen: (d: SessionDetail) => void): Promise<void> {
   try {
     const response = await fetch(`/team/admin/insights/sessions/${encodeURIComponent(sessionId)}`)
-    const body = await response.json() as SessionDetail & { message?: string }
+    const body = await readJson<SessionDetail>(response)
     if (!response.ok) throw new Error(body.message ?? '加载会话详情失败')
     onOpen(body)
   } catch (error) {
@@ -917,7 +862,7 @@ function SyncStatusPanel() {
     let live = true
     setLoading(true); setError('')
     void fetch('/team/admin/sync-status').then(async response => {
-      const body = await response.json() as SyncStatus & { message?: string }
+      const body = await readJson<SyncStatus>(response)
       if (!response.ok) throw new Error(body.message ?? '加载同步状态失败')
       if (live) setData(body)
     }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载同步状态失败') }).finally(() => { if (live) setLoading(false) })
@@ -927,7 +872,7 @@ function SyncStatusPanel() {
     setReconciling(true); setReconcileResult(undefined)
     try {
       const response = await fetch('/team/admin/sync/reconcile', { method: 'POST' })
-      const body = await response.json() as { ok?: boolean; message?: string; checked?: number; deleted?: string[]; orphans?: string[]; repaired?: string[] }
+      const body = await readJson<{ ok?: boolean; checked?: number; deleted?: string[]; orphans?: string[]; repaired?: string[] }>(response)
       if (!response.ok || body.ok !== true) throw new Error(body.message ?? '对账失败')
       setReconcileResult(`扫描 ${body.checked} · 删除 ${body.deleted?.length ?? 0} · 孤儿 ${body.orphans?.length ?? 0} · 修复标记 ${body.repaired?.length ?? 0}`)
     } catch (reason) {
@@ -993,7 +938,7 @@ function GitEmailsPanel() {
     setSaving(true)
     try {
       const response = await fetch('/team/admin/git-emails', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: target, userId }) })
-      const body = await response.json() as { ok?: boolean; message?: string }
+      const body = await readJson<{ ok?: boolean }>(response)
       if (!response.ok || body.ok !== true) throw new Error(body.message ?? '绑定失败')
       setEmail(''); setUserId(undefined)
       void toast.success('绑定成功'); await load()

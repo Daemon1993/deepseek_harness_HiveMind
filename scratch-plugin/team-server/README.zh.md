@@ -9,10 +9,10 @@
 ## 职责
 
 - 认证：PostgreSQL 账号以及 Redis 支持的 Cookie、Bearer 与 SSO ticket 会话
-- 模型网关：通过 `/team/api/model/chat/completions` 和 `/team/api/model/files*` 原样转发，并使用 Server 凭据；流式响应嗅探 `usage`，按静态模型价目写入 `team_model_usage`
-- Session 副本：DSH 原生工件、PostgreSQL 归属索引、完整字节校验与事务发布
-- Git 提交：`/team/api/git/changes` 存储作者身份、subject、完整 message、变更文件路径与增删统计；幂等键为 `(git_remote, commit_hash)`；管理员把 Git 邮箱绑定到平台用户
-- 管理后台：`/team/admin` 四个栏目——总览（团队脉搏、网关用量与成本、Agent 会话、Git 同步日志）、用户、项目（提交趋势、作者分布、热目录、提交类型）、账号与权限（角色、Git 邮箱映射、Session 同步与对账）
+- 模型网关：通过 `/team/api/model/chat/completions` 和 `/team/api/model/files*` 原样转发，并使用 Server 凭据；响应透传，不提取 usage
+- Session 副本：DSH 原生工件、PostgreSQL 归属索引、完整字节校验与事务发布；每会话持久化一份轻量的纯聚合分析投影（事件级明细保留在原始 Session）
+- Git 提交：`/team/api/git/changes` 存储作者身份、subject、完整 message、变更文件路径与增删统计；幂等键为 `(git_remote, commit_hash)`；管理员把 Git 邮箱绑定到平台用户，提交通过 `project_id` 归入稳定的 `team_projects` 实体
+- 管理后台：`/team/admin`——总览（研发价值 KPI、本周期研发动态、提交/Session/开发者趋势、成员与项目研发活动、最近 AI 协作）、用户、项目（提交趋势、作者归并、热目录、提交类型）、账号与权限（角色、Git 邮箱映射、Session 同步与对账）
 - 根路径：`/` 重定向到管理后台，只有管理员能访问 `/team/workspace`
 
 ## 构建与打包

@@ -11,9 +11,14 @@ export type ModelEvent = { time: number; model: string; inputTokens: number; out
 export interface ToolMetric { name: string; calls: number; failures: number; totalMs: number; avgMs: number; maxMs: number }
 export interface ModelMetric { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }
 
+/**
+ * Persisted analytics projection: aggregate metrics only. Event-level detail
+ * (timeline / toolEvents / modelEvents) is intentionally not stored here; the
+ * raw session is the source of truth for process detail and is read on demand.
+ */
 export interface SessionMetrics {
   /** Analytics projection version used to refresh snapshots after parser changes. */
-  version: 1
+  version: 2
   userMessages: number
   assistantMessages: number
   toolCalls: number
@@ -29,6 +34,10 @@ export interface SessionMetrics {
   lastTime: number
   tools: ToolMetric[]
   models: ModelMetric[]
+}
+
+/** Full on-demand projection used by the session-detail viewer. */
+export interface SessionDetail extends SessionMetrics {
   timeline: TimelineItem[]
   toolEvents: ToolEvent[]
   modelEvents: ModelEvent[]
@@ -62,8 +71,12 @@ export function sessionTitle(events: readonly unknown[], fallback = '新会话')
   return fallback
 }
 
-/** Extract safe administrative metrics from one durable DSH session event log. */
-export function analyzeSessionEvents(events: readonly unknown[]): SessionMetrics {
+/**
+ * Compute the full session projection (aggregates + event-level detail) from a
+ * durable DSH session event log. Used by the on-demand session-detail viewer;
+ * {@link analyzeSessionEvents} derives the persisted aggregate subset.
+ */
+export function analyzeSessionDetail(events: readonly unknown[]): SessionDetail {
   const tools = new Map<string, ToolMetric>()
   const models = new Map<string, ModelMetric>()
   const timeline: TimelineItem[] = []
@@ -177,7 +190,7 @@ export function analyzeSessionEvents(events: readonly unknown[]): SessionMetrics
     : 0
 
   return {
-    version: 1,
+    version: 2,
     userMessages,
     assistantMessages,
     toolCalls,
@@ -195,4 +208,14 @@ export function analyzeSessionEvents(events: readonly unknown[]): SessionMetrics
     toolEvents,
     modelEvents,
   }
+}
+
+/**
+ * Extract the persisted aggregate metrics from a durable DSH session event log.
+ * Event-level detail is omitted so the stored analytics stay lightweight; the
+ * raw session is the source of truth for process detail.
+ */
+export function analyzeSessionEvents(events: readonly unknown[]): SessionMetrics {
+  const { timeline: _timeline, toolEvents: _toolEvents, modelEvents: _modelEvents, ...metrics } = analyzeSessionDetail(events)
+  return metrics
 }
