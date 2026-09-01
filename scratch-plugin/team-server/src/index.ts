@@ -1,5 +1,5 @@
 import { Service } from "@deepseek-ai/cordis";
-import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChangeInput, TeamContext, TeamGitOpInput, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
+import type { TeamAdminUser, TeamAuditLogInput, TeamCodeChangeInput, TeamContext, TeamGitOpInput, TeamModelUsageInput, TeamModelUsageRow, TeamServiceApi, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from "./types.ts";
 
 import users from "./users.json" with { type: "json" };
 
@@ -81,12 +81,20 @@ export class TeamService extends Service implements TeamServiceApi {
     return this.database.deleteSyncedSession(sessionId)
   }
 
-  async recordGitOps(userId: string, sessionId: string | undefined, ops: readonly TeamGitOpInput[]): Promise<void> {
-    return this.database.recordGitOps(userId, sessionId, ops)
+  async recordGitOps(userId: string, ops: readonly TeamGitOpInput[]): Promise<void> {
+    return this.database.recordGitOps(userId, ops)
   }
 
-  async recordCodeChanges(userId: string, sessionId: string | undefined, commits: readonly TeamCodeChangeInput[]): Promise<void> {
-    return this.database.recordCodeChanges(userId, sessionId, commits)
+  async recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void> {
+    return this.database.recordCodeChanges(userId, commits)
+  }
+
+  async recordModelUsage(userId: string, usage: TeamModelUsageInput): Promise<void> {
+    return this.database.recordModelUsage(userId, usage)
+  }
+
+  async listModelUsage(since: number): Promise<readonly TeamModelUsageRow[]> {
+    return this.database.listModelUsage(since)
   }
 
   async listCodeChanges(since: number) {

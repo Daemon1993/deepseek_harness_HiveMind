@@ -8,7 +8,7 @@ type Status = 'pending' | 'active' | 'rejected' | 'disabled'
 type User = { id: string; email?: string; name: string; status: Status; role: Role; password?: string }
 type SessionOwner = { sessionId: string; userId: string; userName: string; email?: string; createdAt: string; lastActiveAt: string; title?: string; projectName?: string; gitRemote?: string; updatedAt?: number; blank?: boolean }
 type Phase = 'checking' | 'ready'
-type Section = 'dashboard' | 'users' | 'projects' | 'sessions' | 'accounts' | 'sync'
+type Section = 'dashboard' | 'usage' | 'users' | 'projects' | 'sessions' | 'accounts' | 'sync'
 
 // ── 总览类型（/team/admin/overview）──────────────────────────
 type OverviewSummary = {
@@ -48,6 +48,16 @@ type SessionDetail = { session: SessionOwner; metrics: SessionMetrics; timeline:
 type SyncSession = { sessionId: string; updatedAt: string; title?: string }
 type SyncUser = { userId: string; userName: string; sessions: SyncSession[]; lastSyncAt: string | null }
 type SyncStatus = { generatedAt: string; summary: { totalUsers: number; totalSessions: number; lastSyncAt: string | null }; users: SyncUser[] }
+
+// ── AI 用量类型（/team/admin/usage）──────────────────────────
+type UsageModel = { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number; costCny: number; failed: number; avgLatencyMs: number }
+type UsageUser = { userId: string; userName: string; requests: number; totalTokens: number; costCny: number }
+type UsageRow = { requestId: string; userId: string; userName: string; model: string; inputTokens: number; outputTokens: number; costCny: number; latencyMs: number; status: number; createdAt: string }
+type Usage = {
+  rangeDays: number; generatedAt: string
+  summary: { requests: number; totalTokens: number; inputTokens: number; outputTokens: number; costCny: number; failed: number; avgLatencyMs: number }
+  models: UsageModel[]; users: UsageUser[]; recent: UsageRow[]
+}
 
 const statusOptions = [{ value: 'pending', label: '待审核' }, { value: 'active', label: '已激活' }, { value: 'rejected', label: '已拒绝' }, { value: 'disabled', label: '已禁用' }] satisfies { value: Status; label: string }[]
 const roleOptions = [{ value: 'admin', label: '管理员' }, { value: 'developer', label: '开发者' }, { value: 'reviewer', label: '审核员' }, { value: 'user', label: '普通用户' }] satisfies { value: Role; label: string }[]
@@ -202,6 +212,8 @@ function AdminRoot() {
   if (phase === 'checking') return <Centered><Card loading title="团队平台管理后台" /></Centered>
   const sectionCopy = section === 'dashboard'
     ? { title: '总览', description: '团队 AI 使用情况的统一视图：会话、成员、项目、工具、模型' }
+    : section === 'usage'
+      ? { title: 'AI 用量', description: '模型网关采集的请求、Token 与成本：按模型和成员分布' }
     : section === 'users'
       ? { title: '用户数据', description: '按成员查看项目参与、会话活动、AI 消耗与工具质量' }
     : section === 'projects'
@@ -213,7 +225,7 @@ function AdminRoot() {
       : section === 'sessions'
         ? { title: '会话', description: '按用户与项目查看同步的 Session，并按需打开分析详情' }
         : { title: '账号与权限', description: '统一管理账号申请、用户状态和角色权限' }
-  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">AI</div><div><Typography.Text strong>TEAM PLATFORM</Typography.Text><Typography.Text type="secondary" className="blockText">管理控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={[...(canEdit ? [{ key: 'dashboard', label: '总览' }, { key: 'users', label: '用户' }, { key: 'projects', label: '项目' }, { key: 'sessions', label: '会话' }] : []), { key: 'accounts', label: '账号与权限' }, ...(canEdit ? [{ key: 'sync', label: '同步状态' }] : [])]} /><div className="siderUser"><Avatar>{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardPanel onOpenSession={setDetail} /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : section === 'sessions' ? <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'accounts' ? <AccountsPanel users={users} loading={loading} columns={columns} /> : <SyncStatusPanel />}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
+  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">AI</div><div><Typography.Text strong>TEAM PLATFORM</Typography.Text><Typography.Text type="secondary" className="blockText">管理控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={[...(canEdit ? [{ key: 'dashboard', label: '总览' }, { key: 'usage', label: 'AI 用量' }, { key: 'users', label: '用户' }, { key: 'projects', label: '项目' }, { key: 'sessions', label: '会话' }] : []), { key: 'accounts', label: '账号与权限' }, ...(canEdit ? [{ key: 'sync', label: '同步状态' }] : [])]} /><div className="siderUser"><Avatar>{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardPanel onOpenSession={setDetail} /> : section === 'usage' ? <UsagePanel /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : section === 'sessions' ? <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'accounts' ? <AccountsPanel users={users} loading={loading} columns={columns} /> : <SyncStatusPanel />}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
 }
 
 /** 会话详情抽屉：完整指标 + 分组时间线 + 工具耗时。 */
@@ -404,6 +416,74 @@ function DashboardPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) =
         <Table rowKey="model" loading={loading} size="middle" columns={modelColumns} dataSource={data?.models ?? []} pagination={false} />
       </Space></Card></Col>
     </Row>
+  </Space>
+}
+
+const fmtCny = (value: number): string => value >= 1 ? `¥${value.toFixed(2)}` : value === 0 ? '¥0.00' : `¥${value.toFixed(4)}`
+
+/** AI 用量页：网关采集的模型请求/Token/成本，按模型与用户分布。 */
+function UsagePanel() {
+  const [days, setDays] = useState<1 | 7 | 30>(7)
+  const [data, setData] = useState<Usage>()
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let live = true
+    setLoading(true); setError('')
+    void fetch(`/team/admin/usage?days=${days}`).then(async response => {
+      const body = await response.json() as Usage & { message?: string }
+      if (!response.ok) throw new Error(body.message ?? '加载 AI 用量失败')
+      if (live) setData(body)
+    }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载 AI 用量失败') }).finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [days])
+
+  const s = data?.summary
+  const stats = [
+    { label: '模型请求', value: String(s?.requests ?? 0), detail: `${s?.failed ?? 0} 次失败` },
+    { label: '总 Token', value: fmtNum(s?.totalTokens ?? 0), detail: `输入 ${fmtNum(s?.inputTokens ?? 0)} · 输出 ${fmtNum(s?.outputTokens ?? 0)}` },
+    { label: '成本（估算）', value: fmtCny(s?.costCny ?? 0), detail: '按模型官方价计算' },
+    { label: '平均延迟', value: s === undefined ? '—' : fmt(s.avgLatencyMs), detail: '网关到模型耗时' },
+  ]
+  const modelColumns: ColumnsType<UsageModel> = [
+    { title: '模型', dataIndex: 'model', ellipsis: true },
+    { title: '请求', dataIndex: 'requests', width: 90 },
+    { title: '输入 Token', dataIndex: 'inputTokens', width: 120, render: v => fmtNum(v) },
+    { title: '输出 Token', dataIndex: 'outputTokens', width: 120, render: v => fmtNum(v) },
+    { title: '总 Token', dataIndex: 'totalTokens', width: 120, render: v => fmtNum(v) },
+    { title: '成本', dataIndex: 'costCny', width: 100, render: v => fmtCny(v) },
+    { title: '失败', dataIndex: 'failed', width: 80, render: v => v === 0 ? '—' : <Tag color="red">{v}</Tag> },
+  ]
+  const userColumns: ColumnsType<UsageUser> = [
+    { title: '成员', render: (_, u) => <Space><Avatar shape="square">{u.userName.slice(0, 1)}</Avatar><Typography.Text strong>{u.userName}</Typography.Text><Typography.Text type="secondary">{u.userId}</Typography.Text></Space> },
+    { title: '请求', dataIndex: 'requests', width: 90 },
+    { title: '总 Token', dataIndex: 'totalTokens', width: 120, render: v => fmtNum(v) },
+    { title: '成本', dataIndex: 'costCny', width: 100, render: v => fmtCny(v) },
+  ]
+  const recentColumns: ColumnsType<UsageRow> = [
+    { title: '时间', dataIndex: 'createdAt', width: 180, render: v => new Date(v).toLocaleString() },
+    { title: '成员', width: 130, render: (_, r) => r.userName },
+    { title: '模型', dataIndex: 'model', ellipsis: true },
+    { title: '输入', dataIndex: 'inputTokens', width: 90, render: v => fmtNum(v) },
+    { title: '输出', dataIndex: 'outputTokens', width: 90, render: v => fmtNum(v) },
+    { title: '成本', dataIndex: 'costCny', width: 100, render: v => fmtCny(v) },
+    { title: '延迟', width: 90, render: (_, r) => fmt(r.latencyMs) },
+    { title: '状态', width: 80, render: (_, r) => r.status >= 400 ? <Tag color="red">{r.status}</Tag> : <Tag color="green">{r.status}</Tag> },
+  ]
+  return <Space direction="vertical" size={18} className="analyticsPage">
+    <DimensionToolbar days={days} onChange={setDays} />
+    {error && <Alert type="error" showIcon message={error} />}
+    <Row gutter={[16, 16]} className="analyticsStats">
+      {stats.map(stat => <Col key={stat.label} xs={12} lg={6}><Card loading={loading}><Statistic title={stat.label} value={stat.value} /><Typography.Text type="secondary">{stat.detail}</Typography.Text></Card></Col>)}
+    </Row>
+    <Row gutter={[16, 16]}>
+      <Col xs={24} xl={14}><Card title="模型用量与成本" className="analyticsCard"><Space direction="vertical" size={16} style={{ width: '100%', padding: 16 }}>
+        <HBarChart color="purple" rows={(data?.models ?? []).map(m => ({ label: m.model, value: m.totalTokens, display: `${m.requests} 请求 · ${fmtCny(m.costCny)}` }))} />
+        <Table rowKey="model" loading={loading} size="middle" columns={modelColumns} dataSource={data?.models ?? []} pagination={false} scroll={{ x: 800 }} />
+      </Space></Card></Col>
+      <Col xs={24} xl={10}><Card title="成员 AI 消耗" className="analyticsCard"><Table rowKey="userId" loading={loading} size="middle" columns={userColumns} dataSource={data?.users ?? []} pagination={false} /></Card></Col>
+    </Row>
+    <Card title="最近模型请求" extra={<Typography.Text type="secondary">网关记录 · 非会话内 Token 统计</Typography.Text>} className="analyticsCard"><Table rowKey="requestId" loading={loading} size="middle" columns={recentColumns} dataSource={data?.recent ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1000 }} /></Card>
   </Space>
 }
 

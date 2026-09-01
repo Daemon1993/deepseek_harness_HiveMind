@@ -1,3 +1,0 @@
-- insert:
-    - id: my-tool
-      name: 'file:///E:/dp_harness/deepseek-harness/scratch-plugin/my-tool/src/index.ts'  # 相对路径直接引用源码！无需打包

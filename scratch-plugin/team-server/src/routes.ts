@@ -9,6 +9,7 @@ import { writeTeamLog } from "./team-log.ts";
 import { analyzeSessionEvents, sessionTitle } from './session-metrics.ts'
 import { reconcileSessions } from './reconcile.ts'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import { costOf, usageFromObject, usageFromSseText, type UsageTokens } from './model-usage.ts'
 import { readLimitedJson, RequestBodyTooLargeError } from './request-body.ts'
 import {
   buildSessionCandidate,
@@ -149,9 +150,11 @@ async function handleModelGateway(ctx: TeamContext, sessions: AuthSessions, req:
   if (body === undefined) { sendJson(res, 413, { message: '模型请求体过大' }); return }
   // 只读请求体的 model 字段用于日志/审计，其余原样透传。
   let model: string | undefined
+  let stream = false
   try {
-    const parsed = JSON.parse(body.toString('utf8')) as { model?: unknown }
+    const parsed = JSON.parse(body.toString('utf8')) as { model?: unknown; stream?: unknown }
     model = typeof parsed.model === 'string' && parsed.model !== '' ? parsed.model : undefined
+    stream = parsed.stream === true
   } catch { /* 非 JSON 或解析失败：model 记 unknown */ }
   const requestId = crypto.randomUUID()
   const startedAt = Date.now()
@@ -177,18 +180,49 @@ async function handleModelGateway(ctx: TeamContext, sessions: AuthSessions, req:
       if (value !== null) headers[name] = value
     }
     res.writeHead(upstream.status, headers)
-    if (upstream.body !== null) {
-      for await (const chunk of upstream.body) res.write(chunk)
+    // 透传响应体并顺路提取 usage：流式按 SSE 文本嗅探，非流式解析 JSON。
+    let usage: UsageTokens | undefined
+    if (stream && upstream.body !== null) {
+      let sseTail = ''
+      for await (const chunk of upstream.body) {
+        const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
+        sseTail = (sseTail + text).slice(-512 * 1024)
+        res.write(chunk)
+      }
+      usage = usageFromSseText(sseTail)
+    } else if (!stream) {
+      const responseBody = Buffer.from(await upstream.arrayBuffer())
+      res.write(responseBody)
+      try {
+        const parsed = JSON.parse(responseBody.toString('utf8')) as { usage?: Record<string, unknown> }
+        usage = usageFromObject(parsed.usage)
+      } catch { /* 非 JSON 响应（如网关错误页）：无 usage */ }
     }
     res.end()
+    const latencyMs = Date.now() - startedAt
+    try {
+      if (model !== undefined) {
+        await ctx.team.recordModelUsage(userId, {
+          requestId,
+          model,
+          inputTokens: usage?.inputTokens ?? 0,
+          outputTokens: usage?.outputTokens ?? 0,
+          costCny: await costOf(model, usage?.inputTokens ?? 0, usage?.outputTokens ?? 0),
+          latencyMs,
+          status: upstream.status,
+        })
+      }
+    } catch (error) {
+      writeTeamLog({ level: 'warn', event: 'model.usage.record_failed', message: error instanceof Error ? error.message : String(error), requestId, userId, ...logModel })
+    }
     await ctx.team.audit({
       level: upstream.ok ? 'info' : 'warn',
       event: 'model.gateway',
-      message: `DeepSeek gateway completed status=${upstream.status} duration=${Date.now() - startedAt}ms`,
+      message: `DeepSeek gateway completed status=${upstream.status} duration=${latencyMs}ms`,
       requestId,
       userId,
       ...logModel,
-      details: { status: upstream.status, durationMs: Date.now() - startedAt },
+      details: { status: upstream.status, durationMs: latencyMs, inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0 },
     })
   } catch (error) {
     writeTeamLog({ level: 'error', event: 'model.gateway.failed', message: `Model gateway failed duration=${Date.now() - startedAt}ms request=${requestId}: ${String(error)}`, requestId, userId, ...logModel })
@@ -420,6 +454,47 @@ function addTools(target: Map<string, AggregateTool>, tools: readonly AggregateT
 
 function projectName(gitRemote: string): string {
   return gitRemote.replace(/[/\\]$/, '').split(/[/\\:]/).at(-1)?.replace(/\.git$/, '') || gitRemote
+}
+
+async function handleAdminUsage(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
+  if (!await requireAdmin(ctx, sessions, req, res)) return
+  const days = requestedDays(req)
+  if (days === undefined) { sendJson(res, 400, { message: '统计范围只支持 1、7 或 30 天' }); return }
+  const rows = await ctx.team.listModelUsage(Date.now() - days * 24 * 60 * 60 * 1000)
+  const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number; costCny: number; failed: number; avgLatencyMs: number }>()
+  const users = new Map<string, { userId: string; userName: string; requests: number; totalTokens: number; costCny: number }>()
+  for (const row of rows) {
+    const model = models.get(row.model) ?? { model: row.model, requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costCny: 0, failed: 0, avgLatencyMs: 0 }
+    model.requests++
+    model.inputTokens += row.inputTokens
+    model.outputTokens += row.outputTokens
+    model.totalTokens += row.inputTokens + row.outputTokens
+    model.costCny += row.costCny
+    if (row.status >= 400) model.failed++
+    models.set(row.model, model)
+    const user = users.get(row.userId) ?? { userId: row.userId, userName: row.userName, requests: 0, totalTokens: 0, costCny: 0 }
+    user.requests++
+    user.totalTokens += row.inputTokens + row.outputTokens
+    user.costCny += row.costCny
+    users.set(row.userId, user)
+  }
+  sendJson(res, 200, {
+    rangeDays: days,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      requests: rows.length,
+      totalTokens: rows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0),
+      inputTokens: rows.reduce((sum, row) => sum + row.inputTokens, 0),
+      outputTokens: rows.reduce((sum, row) => sum + row.outputTokens, 0),
+      costCny: rows.reduce((sum, row) => sum + row.costCny, 0),
+      failed: rows.filter(row => row.status >= 400).length,
+      avgLatencyMs: rows.length === 0 ? 0 : Math.round(rows.reduce((sum, row) => sum + row.latencyMs, 0) / rows.length),
+    },
+    models: [...models.values()].sort((a, b) => b.costCny - a.costCny),
+    users: [...users.values()].sort((a, b) => b.costCny - a.costCny),
+    recent: rows.slice(0, 200),
+  })
 }
 
 async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -754,8 +829,7 @@ async function handleGitOps(ctx: TeamContext, sessions: AuthSessions, req: Incom
     || !input.ops.every(op => typeof op === 'object' && op !== null && 'action' in op && typeof op.action === 'string')) {
     sendJson(res, 400, { message: '无效的 Git 操作记录' }); return
   }
-  const sessionId = typeof (input as { sessionId?: unknown }).sessionId === 'string' ? (input as { sessionId?: unknown }).sessionId as string : undefined
-  await ctx.team.recordGitOps(userId, sessionId, input.ops as { action: string; cwd?: string; failed?: boolean }[])
+  await ctx.team.recordGitOps(userId, input.ops as { action: string; cwd?: string; failed?: boolean }[])
   sendJson(res, 200, { ok: true })
 }
 
@@ -777,8 +851,7 @@ async function handleGitChanges(ctx: TeamContext, sessions: AuthSessions, req: I
       && typeof c.deletions === 'number' && Number.isInteger(c.deletions) && c.deletions >= 0)) {
     sendJson(res, 400, { message: '无效的代码变更记录' }); return
   }
-  const sessionId = typeof (input as { sessionId?: unknown }).sessionId === 'string' ? (input as { sessionId?: unknown }).sessionId as string : undefined
-  await ctx.team.recordCodeChanges(userId, sessionId, input.commits as TeamCodeChangeInput[])
+  await ctx.team.recordCodeChanges(userId, input.commits as TeamCodeChangeInput[])
   sendJson(res, 200, { ok: true })
 }
 
@@ -1124,6 +1197,7 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync-status', handler: (req, res) => handleAdminSyncStatus(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync/reconcile', handler: (req, res) => handleAdminSyncReconcile(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/overview', handler: (req, res) => handleAdminOverview(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/team/admin/usage', handler: (req, res) => handleAdminUsage(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/insights/sessions', handler: (req, res) => handleAdminSessionTimeline(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/users', handler: (req, res) => handleAdminUser(ctx, sessions, req, res) }),
   ctx.webServer.register({

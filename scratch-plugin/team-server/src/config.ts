@@ -11,7 +11,12 @@ async function readLocalConfig(): Promise<Map<string, string>> {
 
 /** Read a Host-only team-server setting from the environment or local config. */
 export async function readTeamConfig(name: string): Promise<string> {
-  const configured = process.env[`TEAM_${name}`] ?? process.env[name] ?? (await readLocalConfig()).get(name)
-  if (!configured) throw new Error(`team-server: ${name} is not configured`)
+  const configured = await readTeamConfigOptional(name)
+  if (configured === undefined) throw new Error(`team-server: ${name} is not configured`)
   return configured
+}
+
+/** Read an optional team-server setting; undefined when absent everywhere. */
+export async function readTeamConfigOptional(name: string): Promise<string | undefined> {
+  return process.env[`TEAM_${name}`] ?? process.env[name] ?? (await readLocalConfig()).get(name)
 }

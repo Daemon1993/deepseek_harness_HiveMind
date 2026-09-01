@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import type { TeamCodeChange, TeamCodeChangeInput, TeamLogRecord, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
+import type { TeamCodeChange, TeamCodeChangeInput, TeamLogRecord, TeamModelUsageInput, TeamModelUsageRow, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
 import { readTeamConfig } from './config.ts'
 
 export type TeamAccount = TeamUser & { password: string }
@@ -103,20 +103,19 @@ export class TeamDatabase {
       CREATE TABLE IF NOT EXISTS team_git_ops (
         id BIGSERIAL PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
-        session_id TEXT,
         cwd TEXT,
         action TEXT NOT NULL,
         failed BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
+    await this.pool.query('ALTER TABLE team_git_ops DROP COLUMN IF EXISTS session_id')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_git_ops_user_idx ON team_git_ops (user_id, created_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_git_ops_cwd_idx ON team_git_ops (cwd, created_at DESC)')
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_code_changes (
         id BIGSERIAL PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
-        session_id TEXT,
         cwd TEXT,
         git_remote TEXT,
         commit_hash TEXT UNIQUE,
@@ -128,6 +127,7 @@ export class TeamDatabase {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
+    await this.pool.query('ALTER TABLE team_code_changes DROP COLUMN IF EXISTS session_id')
     await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS git_remote TEXT')
     await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS subject TEXT')
     await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS commit_time BIGINT')
@@ -137,6 +137,22 @@ export class TeamDatabase {
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_occurred_at_idx ON team_audit_logs (occurred_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_user_id_idx ON team_audit_logs (user_id, occurred_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_audit_logs_session_id_idx ON team_audit_logs (session_id, occurred_at DESC)')
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS team_model_usage (
+        request_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
+        model TEXT NOT NULL,
+        input_tokens INT NOT NULL,
+        output_tokens INT NOT NULL,
+        cost_cny NUMERIC(12, 6) NOT NULL DEFAULT 0,
+        latency_ms INT NOT NULL,
+        status INT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `)
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_created_idx ON team_model_usage (created_at DESC)')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_user_idx ON team_model_usage (user_id, created_at DESC)')
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_model_idx ON team_model_usage (model, created_at DESC)')
   }
 
   async close(): Promise<void> {
@@ -322,33 +338,31 @@ export class TeamDatabase {
   }
 
   /** Record one batch of Git operation metadata. */
-  async recordGitOps(userId: string, sessionId: string | undefined, ops: readonly { action: string; cwd?: string; failed?: boolean }[]): Promise<void> {
+  async recordGitOps(userId: string, ops: readonly { action: string; cwd?: string; failed?: boolean }[]): Promise<void> {
     for (const op of ops) {
       await this.client().query(
-        `INSERT INTO team_git_ops (user_id, session_id, action, cwd, failed) VALUES ($1, $2, $3, $4, $5)`,
-        [userId, sessionId ?? null, op.action, op.cwd ?? null, op.failed ?? false],
+        `INSERT INTO team_git_ops (user_id, action, cwd, failed) VALUES ($1, $2, $3, $4)`,
+        [userId, op.action, op.cwd ?? null, op.failed ?? false],
       )
     }
   }
 
   /** Record one batch of code-change summaries; commit hash is the idempotency key. */
-  async recordCodeChanges(userId: string, sessionId: string | undefined, commits: readonly TeamCodeChangeInput[]): Promise<void> {
+  async recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void> {
     for (const commit of commits) {
       await this.client().query(
         `INSERT INTO team_code_changes (
-           user_id, session_id, cwd, git_remote, commit_hash, subject,
+           user_id, cwd, git_remote, commit_hash, subject,
            files_changed, insertions, deletions, commit_time
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (commit_hash) DO UPDATE SET
-           session_id = COALESCE(team_code_changes.session_id, EXCLUDED.session_id),
            cwd = COALESCE(team_code_changes.cwd, EXCLUDED.cwd),
            git_remote = COALESCE(team_code_changes.git_remote, EXCLUDED.git_remote),
            subject = COALESCE(team_code_changes.subject, EXCLUDED.subject),
            commit_time = COALESCE(team_code_changes.commit_time, EXCLUDED.commit_time)`,
         [
           userId,
-          sessionId ?? null,
           commit.cwd ?? null,
           commit.gitRemote ?? null,
           commit.commitHash,
@@ -396,6 +410,53 @@ export class TeamDatabase {
       insertions: row.insertions ?? 0,
       deletions: row.deletions ?? 0,
       time: row.commit_time === null ? row.created_at.getTime() : Number(row.commit_time),
+    }))
+  }
+
+  /** Record one model-usage row captured by the gateway. */
+  async recordModelUsage(userId: string, usage: TeamModelUsageInput): Promise<void> {
+    await this.client().query(
+      `INSERT INTO team_model_usage (request_id, user_id, model, input_tokens, output_tokens, cost_cny, latency_ms, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (request_id) DO NOTHING`,
+      [usage.requestId, userId, usage.model, usage.inputTokens, usage.outputTokens, usage.costCny, usage.latencyMs, usage.status],
+    )
+  }
+
+  /** Read model-usage rows in the requested time range, newest first. */
+  async listModelUsage(since: number): Promise<TeamModelUsageRow[]> {
+    const result = await this.client().query<{
+      request_id: string
+      user_id: string
+      user_name: string
+      model: string
+      input_tokens: number
+      output_tokens: number
+      cost_cny: string
+      latency_ms: number
+      status: number
+      created_at: Date
+    }>(
+      `SELECT usage.request_id, usage.user_id, users.name AS user_name, usage.model,
+              usage.input_tokens, usage.output_tokens, usage.cost_cny,
+              usage.latency_ms, usage.status, usage.created_at
+       FROM team_model_usage AS usage
+       JOIN team_users AS users ON users.id = usage.user_id
+       WHERE usage.created_at >= to_timestamp($1 / 1000.0)
+       ORDER BY usage.created_at DESC`,
+      [since],
+    )
+    return result.rows.map(row => ({
+      userId: row.user_id,
+      userName: row.user_name,
+      requestId: row.request_id,
+      model: row.model,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      costCny: Number(row.cost_cny),
+      latencyMs: row.latency_ms,
+      status: row.status,
+      createdAt: row.created_at.toISOString(),
     }))
   }
 
