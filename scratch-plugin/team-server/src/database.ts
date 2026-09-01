@@ -453,8 +453,104 @@ export class TeamDatabase {
     }))
   }
 
+  /** One project's commit rows in the requested window, newest first. */
+  async listCommitsByProject(gitRemote: string, since: number): Promise<TeamCodeChange[]> {
+    const result = await this.client().query<{
+      user_id: string
+      user_name: string
+      commit_hash: string
+      author_name: string | null
+      author_email: string | null
+      subject: string | null
+      message: string | null
+      changed_files: string[]
+      files_changed: number | null
+      insertions: number | null
+      deletions: number | null
+      commit_time: string | null
+      created_at: Date
+    }>(
+      `SELECT changes.user_id, users.name AS user_name, changes.commit_hash,
+              changes.author_name, changes.author_email, changes.subject,
+              changes.message, changes.changed_files, changes.files_changed,
+              changes.insertions, changes.deletions, changes.commit_time,
+              changes.created_at
+       FROM team_code_changes AS changes
+       JOIN team_users AS users ON users.id = changes.user_id
+       WHERE changes.git_remote = $1
+         AND COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $2
+       ORDER BY COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) DESC`,
+      [gitRemote, since],
+    )
+    return result.rows.map(row => ({
+      userId: row.user_id,
+      userName: row.user_name,
+      commitHash: row.commit_hash,
+      ...(row.author_name === null ? {} : { authorName: row.author_name }),
+      ...(row.author_email === null ? {} : { authorEmail: row.author_email }),
+      ...(row.subject === null ? {} : { subject: row.subject }),
+      ...(row.message === null ? {} : { message: row.message }),
+      changedFiles: row.changed_files,
+      files: row.files_changed ?? 0,
+      insertions: row.insertions ?? 0,
+      deletions: row.deletions ?? 0,
+      time: row.commit_time === null ? row.created_at.getTime() : Number(row.commit_time),
+    }))
+  }
+
+  /** Daily commit buckets for one project, oldest first. */
+  async projectCommitTrend(gitRemote: string, since: number): Promise<{ day: string; commits: number; insertions: number; deletions: number }[]> {
+    const result = await this.client().query<{ day: Date; commits: string; insertions: string; deletions: string }>(
+      `SELECT to_timestamp(COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) / 1000)::date AS day,
+              count(*) AS commits, COALESCE(sum(changes.insertions), 0) AS insertions,
+              COALESCE(sum(changes.deletions), 0) AS deletions
+       FROM team_code_changes AS changes
+       WHERE changes.git_remote = $1
+         AND COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $2
+       GROUP BY day ORDER BY day`,
+      [gitRemote, since],
+    )
+    return result.rows.map(row => ({ day: row.day.toISOString().slice(0, 10), commits: Number(row.commits), insertions: Number(row.insertions), deletions: Number(row.deletions) }))
+  }
+
+  /** Per-author commit aggregates for one project, most commits first. */
+  async projectAuthorStats(gitRemote: string, since: number): Promise<{ authorEmail: string; authorName: string; commits: number; insertions: number; deletions: number }[]> {
+    const result = await this.client().query<{ author_email: string | null; author_name: string | null; commits: string; insertions: string; deletions: string }>(
+      `SELECT changes.author_email, changes.author_name, count(*) AS commits,
+              COALESCE(sum(changes.insertions), 0) AS insertions,
+              COALESCE(sum(changes.deletions), 0) AS deletions
+       FROM team_code_changes AS changes
+       WHERE changes.git_remote = $1
+         AND COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $2
+         AND changes.author_email IS NOT NULL
+       GROUP BY changes.author_email, changes.author_name
+       ORDER BY commits DESC`,
+      [gitRemote, since],
+    )
+    return result.rows.map(row => ({
+      authorEmail: row.author_email ?? 'unknown',
+      authorName: row.author_name ?? row.author_email ?? 'unknown',
+      commits: Number(row.commits),
+      insertions: Number(row.insertions),
+      deletions: Number(row.deletions),
+    }))
+  }
+
+  /** All changed file paths for one project in the window (deduplicated). */
+  async projectChangedFiles(gitRemote: string, since: number): Promise<string[]> {
+    const result = await this.client().query<{ path: string }>(
+      `SELECT DISTINCT path
+       FROM team_code_changes AS changes, jsonb_array_elements_text(changes.changed_files) AS path
+       WHERE changes.git_remote = $1
+         AND COALESCE(changes.commit_time, EXTRACT(EPOCH FROM changes.created_at) * 1000) >= $2`,
+      [gitRemote, since],
+    )
+    return result.rows.map(row => row.path)
+  }
+
   /** List Git-email → platform-user bindings for author attribution. */
   async listGitEmailBindings(): Promise<TeamGitEmailBinding[]> {
+
     const result = await this.client().query<{ email: string; user_id: string; user_name: string }>(
       `SELECT bindings.email, bindings.user_id, users.name AS user_name
        FROM team_git_emails AS bindings
