@@ -51,7 +51,6 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
       const action = classifyGit(command)
       if (action === undefined) return
       const cwd = typeof args.workdir === 'string' && args.workdir !== '' ? args.workdir : undefined
-      const sessionId = exec.agent?.session?.id
       const succeeded = !result.isError
       const time = Date.now()
       const headers = await authHeaders()
@@ -60,7 +59,7 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
       // ① git 操作记录
       await fetch(`${serverURL}/team/api/git/ops`, {
         method: 'POST', headers,
-        body: JSON.stringify({ sessionId, ops: [{ action, cwd, time, ...(succeeded ? {} : { failed: true }) }] }),
+        body: JSON.stringify({ ops: [{ action, cwd, time, ...(succeeded ? {} : { failed: true }) }] }),
       }).catch(() => undefined)
       // ② commit 成功 → 代码变更摘要
       if (action === 'commit' && succeeded && cwd !== undefined) {
@@ -76,7 +75,6 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
         await fetch(`${serverURL}/team/api/git/changes`, {
           method: 'POST', headers,
           body: JSON.stringify({
-            sessionId,
             commits: [{
               commitHash: hash,
               cwd,

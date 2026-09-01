@@ -131,6 +131,24 @@ export interface TeamCodeChange {
   time: number
 }
 
+/** One model-usage record captured by the gateway from a forwarded response. */
+export interface TeamModelUsageInput {
+  requestId: string
+  model: string
+  inputTokens: number
+  outputTokens: number
+  costCny: number
+  latencyMs: number
+  status: number
+}
+
+/** One persisted model-usage row as served to administrators. */
+export interface TeamModelUsageRow extends TeamModelUsageInput {
+  userId: string
+  userName: string
+  createdAt: string
+}
+
 /** Public operations provided by the team platform service. */
 export interface TeamServiceApi {
   getUser(userId: string): TeamUser | undefined
@@ -145,8 +163,10 @@ export interface TeamServiceApi {
   markSessionSynced(sessionId: string, contentMd5: string, fileSize: number): Promise<void>
   clearSessionMarker(sessionId: string): Promise<void>
   deleteSyncedSession(sessionId: string): Promise<boolean>
-  recordGitOps(userId: string, sessionId: string | undefined, ops: readonly TeamGitOpInput[]): Promise<void>
-  recordCodeChanges(userId: string, sessionId: string | undefined, commits: readonly TeamCodeChangeInput[]): Promise<void>
+  recordGitOps(userId: string, ops: readonly TeamGitOpInput[]): Promise<void>
+  recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void>
+  recordModelUsage(userId: string, usage: TeamModelUsageInput): Promise<void>
+  listModelUsage(since: number): Promise<readonly TeamModelUsageRow[]>
   listCodeChanges(since: number): Promise<readonly TeamCodeChange[]>
   listOwnSessions(userId: string): Promise<readonly TeamSyncedSession[]>
   listSyncedSessions(): Promise<readonly TeamSyncedSessionDetail[]>
