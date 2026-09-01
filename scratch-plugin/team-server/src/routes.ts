@@ -32,6 +32,8 @@ const DEEPSEEK_API_KEY_REF = credentialRef('DEEPSEEK_API_KEY')
 const sessionSyncQueue = new SessionSyncQueue()
 const unavailableSessionWarnings = new Set<string>()
 const SESSION_SYNC_LOG_QUIET_MS = 500
+/** Git 同步审计合并：userId → 最近一次合并的批次统计。 */
+const lastGitSyncAudit = new Map<string, { at: number; count: number; message: string; timer: ReturnType<typeof setTimeout> | undefined }>()
 
 type SessionSyncSuccess = {
   mode: 'full' | 'delta'
@@ -641,6 +643,34 @@ async function handleAdminUserDetail(ctx: TeamContext, sessions: AuthSessions, r
   })
 }
 
+async function handleAdminGitSyncLog(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
+  if (!await requireAdmin(ctx, sessions, req, res)) return
+  const days = requestedDays(req)
+  if (days === undefined) { sendJson(res, 400, { message: '统计范围只支持 1、7 或 30 天' }); return }
+  const result = await ctx.team.listAuditLogs({
+    since: Date.now() - days * 24 * 60 * 60 * 1000,
+    events: ['git.sync'],
+    limit: 200,
+  })
+  const rows = result.map(row => ({
+    occurredAt: row.occurredAt,
+    userId: row.userId ?? '—',
+    message: row.message,
+    level: row.level,
+  }))
+  sendJson(res, 200, {
+    rangeDays: days,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      syncedBatches: rows.length,
+      commits: rows.reduce((sum, row) => sum + Number(/\d+/.exec(row.message)?.[0] ?? 0), 0),
+      lastSyncAt: rows[0]?.occurredAt ?? null,
+    },
+    rows,
+  })
+}
+
 async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
   if (!await requireAdmin(ctx, sessions, req, res)) return
@@ -1007,8 +1037,24 @@ async function handleGitChanges(ctx: TeamContext, sessions: AuthSessions, req: I
     await ctx.team.recordCodeChanges(userId, input.commits as TeamCodeChangeInput[])
   } catch (error) {
     writeTeamLog({ level: 'error', event: 'git.changes.record_failed', message: error instanceof Error ? error.message : String(error), userId })
+    await ctx.team.audit({ level: 'error', event: 'git.sync', message: 'Git 提交入库失败', userId, details: { error: error instanceof Error ? error.message.slice(0, 300) : String(error) } }).catch(() => undefined)
     sendJson(res, 500, { message: '提交记录入库失败' })
     return
+  }
+  // Git 同步审计：相邻 500ms 内的批量上报合并为一行，避免整仓导入刷屏。
+  const now = Date.now()
+  const latest = lastGitSyncAudit.get(userId)
+  if (latest !== undefined && now - latest.at < 500) {
+    latest.count += input.commits.length
+    latest.message = `Git 同步 ${latest.count} 条提交`
+    clearTimeout(latest.timer)
+  } else {
+    const entry = { at: now, count: input.commits.length, message: `Git 同步 ${input.commits.length} 条提交`, timer: undefined as ReturnType<typeof setTimeout> | undefined }
+    lastGitSyncAudit.set(userId, entry)
+    entry.timer = setTimeout(() => {
+      void ctx.team.audit({ level: 'info', event: 'git.sync', message: entry.message, userId }).catch(() => undefined)
+      lastGitSyncAudit.delete(userId)
+    }, 500)
   }
   sendJson(res, 200, { ok: true })
 }
@@ -1356,6 +1402,7 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync/reconcile', handler: (req, res) => handleAdminSyncReconcile(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/overview', handler: (req, res) => handleAdminOverview(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/usage', handler: (req, res) => handleAdminUsage(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/team/admin/git-sync-log', handler: (req, res) => handleAdminGitSyncLog(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/git-emails', handler: (req, res) => handleAdminGitEmails(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/projects', handler: (req, res) => handleAdminProjectDetail(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/user-detail', handler: (req, res) => handleAdminUserDetail(ctx, sessions, req, res) }),

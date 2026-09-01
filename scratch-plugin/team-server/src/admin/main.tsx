@@ -321,12 +321,44 @@ function SessionDetailDrawer({ detail, onClose }: { detail: SessionDetail | unde
 }
 
 /** 总览：统一指标卡 + 趋势 + 用户/项目/工具/模型排行 + 最近会话。 */
-/** 总览页：Tab 合并 团队总览 / AI 用量 / Agent 会话。 */
+/** Git 同步日志：server 审计的提交上报记录（近 7/30 天）。 */
+function GitSyncLogPanel() {
+  const [days, setDays] = useState<1 | 7 | 30>(7)
+  const [data, setData] = useState<{ summary: { syncedBatches: number; commits: number; lastSyncAt: string | null }; rows: { occurredAt: string; userId: string; message: string; level: string }[] }>()
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let live = true
+    setLoading(true); setError('')
+    void fetch(`/team/admin/git-sync-log?days=${days}`).then(async response => {
+      const body = await response.json() as (typeof data) & { message?: string }
+      if (!response.ok) throw new Error(body.message ?? '加载 Git 同步日志失败')
+      if (live) setData(body)
+    }).catch(reason => { if (live) setError(reason instanceof Error ? reason.message : '加载 Git 同步日志失败') }).finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [days])
+  const columns: ColumnsType<NonNullable<typeof data>['rows'][number]> = [
+    { title: '时间', dataIndex: 'occurredAt', width: 190, render: value => new Date(value).toLocaleString() },
+    { title: '用户', dataIndex: 'userId', width: 130 },
+    { title: '内容', dataIndex: 'message', render: (_, row) => <Space size={6}><Tag color={row.level === 'error' ? 'red' : 'blue'}>{row.level === 'error' ? '失败' : '同步'}</Tag>{row.message}</Space> },
+  ]
+  return <Space direction="vertical" size={18} className="analyticsPage"><DimensionToolbar days={days} onChange={setDays} />{error && <Alert type="error" showIcon message={error} />}
+    <Row gutter={[16, 16]} className="analyticsStats">
+      <Col xs={12} lg={8}><Card loading={loading}><Statistic title="同步批次" value={data?.summary.syncedBatches ?? 0} /></Card></Col>
+      <Col xs={12} lg={8}><Card loading={loading}><Statistic title="上报提交数" value={fmtNum(data?.summary.commits ?? 0)} /></Card></Col>
+      <Col xs={12} lg={8}><Card loading={loading}><Statistic title="最近同步" value={data?.summary.lastSyncAt == null ? '—' : new Date(data.summary.lastSyncAt).toLocaleString()} /></Card></Col>
+    </Row>
+    <Card title="Git 同步记录" className="analyticsCard"><Table rowKey={(_, index) => String(index)} loading={loading} size="middle" columns={columns} dataSource={data?.rows ?? []} pagination={{ pageSize: 12, showSizeChanger: false }} locale={{ emptyText: '统计范围内没有 Git 同步记录' }} /></Card>
+  </Space>
+}
+
+/** 总览页：Tab 合并 团队总览 / AI 用量 / Agent 会话 / Git 同步。 */
 function DashboardSection({ sessions, loading, onOpenSession }: { sessions: SessionOwner[]; loading: boolean; onOpenSession: (d: SessionDetail) => void }) {
   return <Tabs className="aiTabs" defaultActiveKey="overview" items={[
     { key: 'overview', label: <span className="aiTabLabel"><i className="aiDot dot-blue" />团队总览</span>, children: <DashboardPanel onOpenSession={onOpenSession} /> },
     { key: 'usage', label: <span className="aiTabLabel"><i className="aiDot dot-purple" />AI 用量</span>, children: <UsagePanel /> },
     { key: 'sessions', label: <span className="aiTabLabel"><i className="aiDot dot-green" />Agent 会话</span>, children: <SessionOwnershipPanel sessions={sessions} loading={loading} onOpenSession={onOpenSession} /> },
+    { key: 'git-sync', label: <span className="aiTabLabel"><i className="aiDot dot-orange" />Git 同步</span>, children: <GitSyncLogPanel /> },
   ]} />
 }
 
