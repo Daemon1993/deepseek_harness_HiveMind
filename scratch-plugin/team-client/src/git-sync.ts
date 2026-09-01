@@ -152,7 +152,7 @@ async function scanCommits(root: string, cursor: string | undefined): Promise<Sc
   })
 }
 
-/** 读取已导入仓库清单（兼容旧格式：只取 root 与游标，并还原被旧 hook 改过的 core.hooksPath）。 */
+/** 读取已导入仓库清单（只认 root 与游标，其他历史字段一律忽略）。 */
 async function loadWatched(): Promise<Map<string, WatchedRepository>> {
   try {
     const value = JSON.parse(await readFile(watchedPath, 'utf8')) as unknown
@@ -166,17 +166,6 @@ async function loadWatched(): Promise<Map<string, WatchedRepository>> {
         root: record.root,
         ...(typeof record.lastSyncedHash === 'string' ? { lastSyncedHash: record.lastSyncedHash } : {}),
       })
-      // 旧版本在此仓库安装过 hooks：还原 core.hooksPath，避免残留 hook 继续写队列文件。
-      if (typeof record.managedHooksPath === 'string') {
-        const current = await optionalGit(record.root, ['config', '--local', '--get', 'core.hooksPath'])
-        if (current?.replace(/\\/g, '/') === record.managedHooksPath.replace(/\\/g, '/')) {
-          if (typeof record.previousHooksPath === 'string') {
-            await git(record.root, ['config', '--local', 'core.hooksPath', record.previousHooksPath]).catch(() => undefined)
-          } else {
-            await git(record.root, ['config', '--local', '--unset', 'core.hooksPath']).catch(() => undefined)
-          }
-        }
-      }
     }
     return result
   } catch {
