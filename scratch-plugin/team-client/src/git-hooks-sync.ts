@@ -151,22 +151,28 @@ async function saveWatched(watched: Map<string, WatchedRepository>): Promise<voi
   await rename(temporary, watchedPath)
 }
 
-async function shortStat(root: string, commitHash: string): Promise<{ files: number; insertions: number; deletions: number }> {
-  const output = await git(root, ['diff-tree', '-r', '--shortstat', commitHash])
+async function shortStat(root: string, commitHash: string): Promise<{ files: number; insertions: number; deletions: number; changedFiles: string[] }> {
+  // --root 使根提交（无父提交）也能产出相对空树的完整 diff。
+  const output = await git(root, ['diff-tree', '-r', '--root', '--shortstat', commitHash])
+  const nameStatus = await git(root, ['diff-tree', '-r', '--root', '--name-status', '--no-commit-id', commitHash])
   return {
     files: Number(output.match(/(\d+) files? changed/)?.[1] ?? 0),
     insertions: Number(output.match(/(\d+) insertions?\(\+\)/)?.[1] ?? 0),
     deletions: Number(output.match(/(\d+) deletions?\(-\)/)?.[1] ?? 0),
+    changedFiles: nameStatus.split('\n').map(line => line.split('\t').at(-1) ?? '').filter(path => path !== '').slice(0, 200),
   }
 }
 
-async function commitMetadata(root: string, commitHash: string): Promise<{ subject?: string; time: number }> {
-  const output = await git(root, ['show', '-s', '--format=%s%x00%ct', commitHash])
-  const [subject, seconds] = output.split('\0')
-  const parsed = Number(seconds)
+async function commitMetadata(root: string, commitHash: string): Promise<{ subject?: string; message?: string; authorName?: string; authorEmail?: string; time: number }> {
+  const output = await git(root, ['show', '-s', '--format=%an%x00%ae%x00%B%x00%ct', commitHash])
+  const [authorName, authorEmail, message, seconds] = output.split('\0')
+  const subject = message?.split('\n')[0]?.trim() ?? ''
   return {
-    ...(subject === undefined || subject === '' ? {} : { subject }),
-    time: Number.isFinite(parsed) ? parsed * 1000 : Date.now(),
+    ...(authorName === undefined || authorName === '' ? {} : { authorName }),
+    ...(authorEmail === undefined || authorEmail === '' ? {} : { authorEmail }),
+    ...(subject === '' ? {} : { subject }),
+    ...(message === undefined || message.trim() === '' ? {} : { message: message.trimEnd() }),
+    time: Number.isFinite(Number(seconds)) ? Number(seconds) * 1000 : Date.now(),
   }
 }
 

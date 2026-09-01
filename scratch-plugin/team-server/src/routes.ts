@@ -497,6 +497,34 @@ async function handleAdminUsage(ctx: TeamContext, sessions: AuthSessions, req: I
   })
 }
 
+async function handleAdminGitEmails(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!await requireAdmin(ctx, sessions, req, res)) return
+  if (req.method === 'GET') {
+    sendJson(res, 200, { bindings: await ctx.team.listGitEmailBindings() })
+    return
+  }
+  if (req.method === 'POST') {
+    try {
+      const input = await readJson(req)
+      if (typeof input !== 'object' || input === null
+        || !('userId' in input) || typeof input.userId !== 'string' || input.userId === ''
+        || !('email' in input) || typeof input.email !== 'string'
+        || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(input.email)) {
+        sendJson(res, 400, { message: '请输入有效的用户 ID 和 Git 邮箱' }); return
+      }
+      const bound = await ctx.team.bindGitEmail(input.userId, input.email.trim().toLowerCase())
+      sendJson(res, bound ? 200 : 404, bound ? { ok: true } : { message: '用户不存在' })
+    } catch { sendJson(res, 400, { message: '请求格式错误' }) }
+    return
+  }
+  if (req.method === 'DELETE') {
+    const email = decodeURIComponent(new URL(req.url ?? '', 'http://localhost').pathname.split('/').at(-1) ?? '')
+    sendJson(res, await ctx.team.unbindGitEmail(email) ? 204 : 404, {})
+    return
+  }
+  sendJson(res, 405, { message: '只支持 GET、POST 或 DELETE 请求' })
+}
+
 async function handleAdminOverview(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
   if (!await requireAdmin(ctx, sessions, req, res)) return
@@ -844,7 +872,11 @@ async function handleGitChanges(ctx: TeamContext, sessions: AuthSessions, req: I
     || !input.commits.every(c => typeof c === 'object' && c !== null
       && typeof c.commitHash === 'string' && c.commitHash !== ''
       && (!('gitRemote' in c) || typeof c.gitRemote === 'string')
+      && (!('authorName' in c) || typeof c.authorName === 'string')
+      && (!('authorEmail' in c) || typeof c.authorEmail === 'string')
       && (!('subject' in c) || typeof c.subject === 'string')
+      && (!('message' in c) || typeof c.message === 'string')
+      && (!('changedFiles' in c) || Array.isArray(c.changedFiles) && c.changedFiles.every((path: unknown) => typeof path === 'string') && c.changedFiles.length <= 500)
       && (!('time' in c) || typeof c.time === 'number' && Number.isFinite(c.time) && c.time >= 0)
       && typeof c.files === 'number' && Number.isInteger(c.files) && c.files >= 0
       && typeof c.insertions === 'number' && Number.isInteger(c.insertions) && c.insertions >= 0
@@ -1198,6 +1230,7 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync/reconcile', handler: (req, res) => handleAdminSyncReconcile(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/overview', handler: (req, res) => handleAdminOverview(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/usage', handler: (req, res) => handleAdminUsage(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'prefix', path: '/team/admin/git-emails', handler: (req, res) => handleAdminGitEmails(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/insights/sessions', handler: (req, res) => handleAdminSessionTimeline(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'prefix', path: '/team/admin/users', handler: (req, res) => handleAdminUser(ctx, sessions, req, res) }),
   ctx.webServer.register({

@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import type { TeamCodeChange, TeamCodeChangeInput, TeamLogRecord, TeamModelUsageInput, TeamModelUsageRow, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
+import type { TeamCodeChange, TeamCodeChangeInput, TeamGitEmailBinding, TeamLogRecord, TeamModelUsageInput, TeamModelUsageRow, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
 import { readTeamConfig } from './config.ts'
 
 export type TeamAccount = TeamUser & { password: string }
@@ -117,9 +117,13 @@ export class TeamDatabase {
         id BIGSERIAL PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
         cwd TEXT,
-        git_remote TEXT,
-        commit_hash TEXT UNIQUE,
+        git_remote TEXT NOT NULL DEFAULT '',
+        commit_hash TEXT,
+        author_name TEXT,
+        author_email TEXT,
         subject TEXT,
+        message TEXT,
+        changed_files JSONB NOT NULL DEFAULT '[]'::jsonb,
         files_changed INT,
         insertions INT,
         deletions INT,
@@ -127,7 +131,18 @@ export class TeamDatabase {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
-    await this.pool.query('ALTER TABLE team_code_changes DROP COLUMN IF EXISTS session_id')
+    // Commit 主键迁移：全局唯一 hash → (git_remote, commit_hash) 复合唯一；空 remote 归一为 ''。
+    await this.pool.query('UPDATE team_code_changes SET git_remote = \'\' WHERE git_remote IS NULL')
+    await this.pool.query('ALTER TABLE team_code_changes ALTER COLUMN git_remote SET DEFAULT \'\'')
+    await this.pool.query('ALTER TABLE team_code_changes ALTER COLUMN git_remote SET NOT NULL')
+    await this.pool.query('ALTER TABLE team_code_changes DROP CONSTRAINT IF EXISTS team_code_changes_commit_hash_key')
+    await this.pool.query('DROP INDEX IF EXISTS team_code_changes_commit_hash_key')
+    await this.pool.query('CREATE UNIQUE INDEX IF NOT EXISTS team_code_changes_project_hash_idx ON team_code_changes (git_remote, commit_hash)')
+    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS author_name TEXT')
+    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS author_email TEXT')
+    await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS message TEXT')
+    await this.pool.query("ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS changed_files JSONB NOT NULL DEFAULT '[]'::jsonb")
+    await this.pool.query('CREATE INDEX IF NOT EXISTS team_code_changes_author_idx ON team_code_changes (author_email, commit_time DESC)')
     await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS git_remote TEXT')
     await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS subject TEXT')
     await this.pool.query('ALTER TABLE team_code_changes ADD COLUMN IF NOT EXISTS commit_time BIGINT')
@@ -153,6 +168,13 @@ export class TeamDatabase {
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_created_idx ON team_model_usage (created_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_user_idx ON team_model_usage (user_id, created_at DESC)')
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_model_usage_model_idx ON team_model_usage (model, created_at DESC)')
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS team_git_emails (
+        email TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `)
   }
 
   async close(): Promise<void> {
@@ -347,26 +369,34 @@ export class TeamDatabase {
     }
   }
 
-  /** Record one batch of code-change summaries; commit hash is the idempotency key. */
+  /** Record one batch of code-change summaries; (git_remote, commit_hash) is the idempotency key. */
   async recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void> {
     for (const commit of commits) {
+      const gitRemote = commit.gitRemote ?? ''
       await this.client().query(
         `INSERT INTO team_code_changes (
-           user_id, cwd, git_remote, commit_hash, subject,
-           files_changed, insertions, deletions, commit_time
+           user_id, cwd, git_remote, commit_hash, author_name, author_email,
+           subject, message, changed_files, files_changed, insertions, deletions, commit_time
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (commit_hash) DO UPDATE SET
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
+         ON CONFLICT (git_remote, commit_hash) DO UPDATE SET
            cwd = COALESCE(team_code_changes.cwd, EXCLUDED.cwd),
-           git_remote = COALESCE(team_code_changes.git_remote, EXCLUDED.git_remote),
+           author_name = COALESCE(team_code_changes.author_name, EXCLUDED.author_name),
+           author_email = COALESCE(team_code_changes.author_email, EXCLUDED.author_email),
            subject = COALESCE(team_code_changes.subject, EXCLUDED.subject),
+           message = COALESCE(team_code_changes.message, EXCLUDED.message),
+           changed_files = CASE WHEN team_code_changes.changed_files = '[]'::jsonb THEN EXCLUDED.changed_files ELSE team_code_changes.changed_files END,
            commit_time = COALESCE(team_code_changes.commit_time, EXCLUDED.commit_time)`,
         [
           userId,
           commit.cwd ?? null,
-          commit.gitRemote ?? null,
+          gitRemote,
           commit.commitHash,
+          commit.authorName ?? null,
+          commit.authorEmail ?? null,
           commit.subject ?? null,
+          commit.message ?? null,
+          JSON.stringify(commit.changedFiles ?? []),
           commit.files,
           commit.insertions,
           commit.deletions,
@@ -383,7 +413,11 @@ export class TeamDatabase {
       user_name: string
       commit_hash: string
       git_remote: string | null
+      author_name: string | null
+      author_email: string | null
       subject: string | null
+      message: string | null
+      changed_files: string[]
       files_changed: number | null
       insertions: number | null
       deletions: number | null
@@ -391,7 +425,9 @@ export class TeamDatabase {
       created_at: Date
     }>(
       `SELECT changes.user_id, users.name AS user_name, changes.commit_hash,
-              changes.git_remote, changes.subject, changes.files_changed,
+              NULLIF(changes.git_remote, '') AS git_remote,
+              changes.author_name, changes.author_email, changes.subject,
+              changes.message, changes.changed_files, changes.files_changed,
               changes.insertions, changes.deletions, changes.commit_time,
               changes.created_at
        FROM team_code_changes AS changes
@@ -405,12 +441,45 @@ export class TeamDatabase {
       userName: row.user_name,
       commitHash: row.commit_hash,
       ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }),
+      ...(row.author_name === null ? {} : { authorName: row.author_name }),
+      ...(row.author_email === null ? {} : { authorEmail: row.author_email }),
       ...(row.subject === null ? {} : { subject: row.subject }),
+      ...(row.message === null ? {} : { message: row.message }),
+      changedFiles: row.changed_files,
       files: row.files_changed ?? 0,
       insertions: row.insertions ?? 0,
       deletions: row.deletions ?? 0,
       time: row.commit_time === null ? row.created_at.getTime() : Number(row.commit_time),
     }))
+  }
+
+  /** List Git-email → platform-user bindings for author attribution. */
+  async listGitEmailBindings(): Promise<TeamGitEmailBinding[]> {
+    const result = await this.client().query<{ email: string; user_id: string; user_name: string }>(
+      `SELECT bindings.email, bindings.user_id, users.name AS user_name
+       FROM team_git_emails AS bindings
+       JOIN team_users AS users ON users.id = bindings.user_id
+       ORDER BY bindings.email`,
+    )
+    return result.rows.map(row => ({ email: row.email, userId: row.user_id, userName: row.user_name }))
+  }
+
+  /** Bind one Git email to a platform user; false when the user does not exist. */
+  async bindGitEmail(userId: string, email: string): Promise<boolean> {
+    const user = await this.client().query('SELECT 1 FROM team_users WHERE id = $1', [userId])
+    if (user.rowCount !== 1) return false
+    await this.client().query(
+      `INSERT INTO team_git_emails (email, user_id) VALUES ($1, $2)
+       ON CONFLICT (email) DO UPDATE SET user_id = EXCLUDED.user_id`,
+      [email, userId],
+    )
+    return true
+  }
+
+  /** Remove one Git-email binding. */
+  async unbindGitEmail(email: string): Promise<boolean> {
+    const result = await this.client().query('DELETE FROM team_git_emails WHERE email = $1', [email])
+    return result.rowCount === 1
   }
 
   /** Record one model-usage row captured by the gateway. */

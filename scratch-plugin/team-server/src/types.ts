@@ -111,7 +111,13 @@ export interface TeamCodeChangeInput {
   commitHash: string
   cwd?: string
   gitRemote?: string
+  authorName?: string
+  authorEmail?: string
   subject?: string
+  /** Full commit message (subject + body), when available. */
+  message?: string
+  /** Changed file paths (relative), capped at collection time. */
+  changedFiles?: readonly string[]
   files: number
   insertions: number
   deletions: number
@@ -124,11 +130,22 @@ export interface TeamCodeChange {
   userName: string
   commitHash: string
   gitRemote?: string
+  authorName?: string
+  authorEmail?: string
   subject?: string
+  message?: string
+  changedFiles?: readonly string[]
   files: number
   insertions: number
   deletions: number
   time: number
+}
+
+/** One Git-email → platform-user binding for author attribution. */
+export interface TeamGitEmailBinding {
+  email: string
+  userId: string
+  userName: string
 }
 
 /** One model-usage record captured by the gateway from a forwarded response. */
@@ -167,6 +184,9 @@ export interface TeamServiceApi {
   recordCodeChanges(userId: string, commits: readonly TeamCodeChangeInput[]): Promise<void>
   recordModelUsage(userId: string, usage: TeamModelUsageInput): Promise<void>
   listModelUsage(since: number): Promise<readonly TeamModelUsageRow[]>
+  listGitEmailBindings(): Promise<readonly TeamGitEmailBinding[]>
+  bindGitEmail(userId: string, email: string): Promise<boolean>
+  unbindGitEmail(email: string): Promise<boolean>
   listCodeChanges(since: number): Promise<readonly TeamCodeChange[]>
   listOwnSessions(userId: string): Promise<readonly TeamSyncedSession[]>
   listSyncedSessions(): Promise<readonly TeamSyncedSessionDetail[]>

@@ -69,11 +69,15 @@ describe('command-line Git synchronization', () => {
     expect(await readFile(marker, 'utf8')).toBe('ran')
     await vi.waitFor(() => expect(requests.some(request => request.url.endsWith('/team/api/git/changes'))).toBe(true), { timeout: 5_000 })
     const changes = requests.find(request => request.url.endsWith('/team/api/git/changes'))?.body as {
-      commits: { gitRemote?: string; subject?: string }[]
+      commits: { gitRemote?: string; subject?: string; authorName?: string; authorEmail?: string; message?: string; changedFiles?: string[] }[]
     }
     expect(changes.commits[0]).toMatchObject({
       gitRemote: 'https://example.com/team/repository.git',
       subject: 'test',
+      authorName: 'Test',
+      authorEmail: 'test@example.com',
+      message: 'test',
+      changedFiles: ['file.txt'],
     })
 
     const unwatch = Object.assign(Readable.from([JSON.stringify({ cwd: repositoryRoot })]), { method: 'POST' })

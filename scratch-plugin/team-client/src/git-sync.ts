@@ -64,8 +64,13 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
       // ② commit 成功 → 代码变更摘要
       if (action === 'commit' && succeeded && cwd !== undefined) {
         const hash = (await run('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim()
-        const stat = parseShortStat((await run('git', ['diff-tree', '-r', '--shortstat', 'HEAD'], { cwd })).stdout)
+        const stat = parseShortStat((await run('git', ['diff-tree', '-r', '--root', '--shortstat', 'HEAD'], { cwd })).stdout)
         const subject = (await run('git', ['show', '-s', '--format=%s', 'HEAD'], { cwd })).stdout.trim()
+        const author = (await run('git', ['show', '-s', '--format=%an%x00%ae%x00%B', 'HEAD'], { cwd })).stdout
+        const [authorName, authorEmail, ...messageParts] = author.split('\0')
+        const message = messageParts.join('\0').trimEnd()
+        const changedFiles = (await run('git', ['diff-tree', '-r', '--root', '--name-status', '--no-commit-id', 'HEAD'], { cwd })).stdout
+          .split('\n').map(line => line.split('\t').at(-1) ?? '').filter(path => path !== '').slice(0, 200)
         let gitRemote: string | undefined
         try {
           gitRemote = (await run('git', ['remote', 'get-url', 'origin'], { cwd })).stdout.trim() || undefined
@@ -79,7 +84,11 @@ export function registerGitSync(ctx: Context, serverURL: string): void {
               commitHash: hash,
               cwd,
               ...(gitRemote === undefined ? {} : { gitRemote }),
+              ...(authorName === undefined || authorName === '' ? {} : { authorName }),
+              ...(authorEmail === undefined || authorEmail === '' ? {} : { authorEmail }),
               ...(subject === '' ? {} : { subject }),
+              ...(message === '' ? {} : { message }),
+              changedFiles,
               files: stat.files,
               insertions: stat.insertions,
               deletions: stat.deletions,
