@@ -620,6 +620,25 @@ export class TeamDatabase {
     }))
   }
 
+  /** One project's session analytics snapshots, newest activity first. */
+  async listAnalyticsByProject(gitRemote: string): Promise<TeamSessionAnalytics[]> {
+    const result = await this.client().query<{ session_id: string; project_name: string | null; git_remote: string | null; title: string; last_active_at: string; metrics: TeamSessionAnalytics['metrics'] }>(
+      `SELECT session_id, project_name, git_remote, title, last_active_at, metrics
+       FROM team_session_analytics
+       WHERE git_remote = $1
+       ORDER BY last_active_at DESC`,
+      [gitRemote],
+    )
+    return result.rows.map(row => ({
+      sessionId: row.session_id,
+      ...(row.project_name === null ? {} : { projectName: row.project_name }),
+      ...(row.git_remote === null ? {} : { gitRemote: row.git_remote }),
+      title: row.title,
+      lastActiveAt: Number(row.last_active_at),
+      metrics: row.metrics,
+    }))
+  }
+
   /** List Git-email → platform-user bindings for author attribution. */
   async listGitEmailBindings(): Promise<TeamGitEmailBinding[]> {
 

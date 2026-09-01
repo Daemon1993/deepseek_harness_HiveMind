@@ -536,12 +536,34 @@ async function handleAdminProjectDetail(ctx: TeamContext, sessions: AuthSessions
   const daysParam = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('days') ?? '30')
   const days = daysParam === 7 || daysParam === 30 || daysParam === 90 ? daysParam : 30
   const since = Date.now() - days * 24 * 60 * 60 * 1000
-  const [commits, trend, authors, changedFiles] = await Promise.all([
+  const [commits, trend, authors, changedFiles, analytics] = await Promise.all([
     ctx.team.listCommitsByProject(gitRemote, since),
     ctx.team.projectCommitTrend(gitRemote, since),
     ctx.team.projectAuthorStats(gitRemote, since),
     ctx.team.projectChangedFiles(gitRemote, since),
+    ctx.team.listAnalyticsByProject(gitRemote),
   ])
+  const analyticsInWindow = analytics.filter(snapshot => snapshot.lastActiveAt >= since)
+  const models = new Map<string, { model: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number }>()
+  for (const snapshot of analyticsInWindow) {
+    for (const metric of snapshot.metrics.models) {
+      const model = models.get(metric.model) ?? { model: metric.model, requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+      model.requests += metric.requests
+      model.inputTokens += metric.inputTokens
+      model.outputTokens += metric.outputTokens
+      model.totalTokens += metric.totalTokens
+      models.set(metric.model, model)
+    }
+  }
+  const tools = new Map<string, { name: string; calls: number; failures: number }>()
+  for (const snapshot of analyticsInWindow) {
+    for (const tool of snapshot.metrics.tools) {
+      const entry = tools.get(tool.name) ?? { name: tool.name, calls: 0, failures: 0 }
+      entry.calls += tool.calls
+      entry.failures += tool.failures
+      tools.set(tool.name, entry)
+    }
+  }
   const typeBuckets = new Map<string, number>()
   for (const commit of commits) {
     const type = classifyCommitType(commit.subject)
@@ -563,7 +585,15 @@ async function handleAdminProjectDetail(ctx: TeamContext, sessions: AuthSessions
       deletions: commits.reduce((sum, commit) => sum + commit.deletions, 0),
       lastCommitAt: commits[0]?.time ?? 0,
       topChangedFiles: changedFiles.length,
+      sessions: analyticsInWindow.length,
+      toolCalls: analyticsInWindow.reduce((sum, snapshot) => sum + snapshot.metrics.toolCalls, 0),
+      toolFailures: analyticsInWindow.reduce((sum, snapshot) => sum + snapshot.metrics.toolFailures, 0),
+      modelRequests: analyticsInWindow.reduce((sum, snapshot) => sum + snapshot.metrics.models.reduce((s, m) => s + m.requests, 0), 0),
+      totalTokens: analyticsInWindow.reduce((sum, snapshot) => sum + snapshot.metrics.models.reduce((s, m) => s + m.totalTokens, 0), 0),
+      lastSessionAt: analyticsInWindow[0]?.lastActiveAt ?? 0,
     },
+    models: [...models.values()].sort((a, b) => b.totalTokens - a.totalTokens),
+    tools: [...tools.values()].sort((a, b) => b.calls - a.calls),
     trend,
     authors: authors.map(author => ({
       ...author,
@@ -608,9 +638,36 @@ async function handleAdminUserDetail(ctx: TeamContext, sessions: AuthSessions, r
   const analyticsWindows = analytics.filter(snapshot => snapshot.lastActiveAt >= since)
   const sessionProjects = new Set(analytics.flatMap(snapshot => snapshot.gitRemote === undefined ? [] : [snapshot.gitRemote]))
   const activeDays = new Set(commits.map(commit => new Date(commit.time).toISOString().slice(0, 10))).size
+  const commitTypes = new Map<string, number>()
+  for (const commit of commits) {
+    const type = classifyCommitType(commit.subject)
+    commitTypes.set(type, (commitTypes.get(type) ?? 0) + 1)
+  }
+  const commitTrend = new Map<string, { day: string; commits: number; insertions: number; deletions: number }>()
+  for (const commit of commits) {
+    const day = new Date(commit.time).toISOString().slice(0, 10)
+    const bucket = commitTrend.get(day) ?? { day, commits: 0, insertions: 0, deletions: 0 }
+    bucket.commits++
+    bucket.insertions += commit.insertions
+    bucket.deletions += commit.deletions
+    commitTrend.set(day, bucket)
+  }
+  const projectSessionCounts = new Map<string, { sessions: number; lastActiveAt: number }>()
+  for (const snapshot of analyticsWindows) {
+    if (snapshot.gitRemote === undefined) continue
+    const entry = projectSessionCounts.get(snapshot.gitRemote) ?? { sessions: 0, lastActiveAt: 0 }
+    entry.sessions++
+    entry.lastActiveAt = Math.max(entry.lastActiveAt, snapshot.lastActiveAt)
+    projectSessionCounts.set(snapshot.gitRemote, entry)
+  }
+  const toolCalls = analyticsWindows.reduce((sum, snapshot) => sum + snapshot.metrics.toolCalls, 0)
+  const toolFailures = analyticsWindows.reduce((sum, snapshot) => sum + snapshot.metrics.toolFailures, 0)
+  const turnCount = analyticsWindows.reduce((sum, snapshot) => sum + snapshot.metrics.turnCount, 0)
   sendJson(res, 200, {
     userId,
     userName: user.name,
+    role: user.role,
+    status: user.status,
     rangeDays: days,
     generatedAt: new Date().toISOString(),
     summary: {
@@ -620,16 +677,29 @@ async function handleAdminUserDetail(ctx: TeamContext, sessions: AuthSessions, r
       activeDays,
       activeProjects: projectCommits.size,
       sessions: analyticsWindows.length,
-      toolCalls: analyticsWindows.reduce((sum, snapshot) => sum + snapshot.metrics.toolCalls, 0),
-      toolFailures: analyticsWindows.reduce((sum, snapshot) => sum + snapshot.metrics.toolFailures, 0),
+      toolCalls,
+      toolFailures,
+      toolSuccessRate: toolCalls === 0 ? 0 : Math.round((toolCalls - toolFailures) / toolCalls * 1000) / 10,
+      avgTurns: analyticsWindows.length === 0 ? 0 : Math.round(turnCount / analyticsWindows.length * 10) / 10,
       modelRequests: usageRows.length,
       totalTokens: usageRows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0),
       costCny: usageRows.reduce((sum, row) => sum + row.costCny, 0),
       lastActiveAt: Math.max(commits[0]?.time ?? 0, analyticsWindows[0]?.lastActiveAt ?? 0),
     },
     projects: [...projectCommits.entries()]
-      .map(([gitRemote, count]) => ({ gitRemote, projectName: projectName(gitRemote), commits: count, hasSessions: sessionProjects.has(gitRemote) }))
+      .map(([gitRemote, count]) => ({
+        gitRemote,
+        projectName: projectName(gitRemote),
+        commits: count,
+        hasSessions: sessionProjects.has(gitRemote),
+        sessions: projectSessionCounts.get(gitRemote)?.sessions ?? 0,
+        lastActiveAt: Math.max(projectSessionCounts.get(gitRemote)?.lastActiveAt ?? 0, commits.find(c => c.gitRemote === gitRemote)?.time ?? 0),
+      }))
       .sort((a, b) => b.commits - a.commits),
+    commitTypes: [...commitTypes.entries()]
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count),
+    commitTrend: [...commitTrend.values()].sort((a, b) => a.day.localeCompare(b.day)),
     models: [...models.values()].sort((a, b) => b.costCny - a.costCny),
     commits: commits.slice(0, 100).map(commit => ({ ...commit, type: classifyCommitType(commit.subject) })),
     recentSessions: analyticsWindows.slice(0, 50).map(snapshot => ({
