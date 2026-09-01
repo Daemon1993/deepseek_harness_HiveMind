@@ -125,6 +125,18 @@ export class TeamService extends Service implements TeamServiceApi {
     return this.database.projectChangedFiles(gitRemote, since)
   }
 
+  async listCommitsByUser(userId: string, since: number): Promise<readonly TeamCodeChange[]> {
+    return this.database.listCommitsByUser(userId, since)
+  }
+
+  async listModelUsageByUser(userId: string, since: number): Promise<readonly TeamModelUsageRow[]> {
+    return this.database.listModelUsageByUser(userId, since)
+  }
+
+  async listAnalyticsByUser(userId: string): Promise<readonly TeamSessionAnalytics[]> {
+    return this.database.listAnalyticsByUser(userId)
+  }
+
   async listCodeChanges(since: number) {
     return this.database.listCodeChanges(since)
   }
