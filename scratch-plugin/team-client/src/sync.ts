@@ -280,14 +280,11 @@ export function registerSessionSync(ctx: Context, serverURL: string): void {
   const backfill = async (): Promise<void> => {
     syncLog('info', 'backfill start')
     try {
-      for (const session of ctx.sessions.list()) {
-        void flushThenSchedule(session)
-      }
       const listed = await ctx.sessionController.list({}, AbortSignal.timeout(15_000))
       for (const item of listed.items) {
         try {
           const inspected = await ctx.sessionController.inspect(item.sessionId, AbortSignal.timeout(15_000))
-          scheduler.runNow(inspected.meta.id, () => syncSession(inspected.meta.id, inspected.meta))
+          await syncSession(inspected.meta.id, inspected.meta)
         } catch (error) {
           warnOnce(`backfill:${item.sessionId}`, `session backfill inspect failed session=${item.sessionId}: ${String(error)}`)
         }

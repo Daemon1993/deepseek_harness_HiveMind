@@ -283,6 +283,67 @@ async function handleAdminUsers(ctx: TeamContext, sessions: AuthSessions, req: I
   sendJson(res, 200, { users })
 }
 
+function dailyWorkDate(req: IncomingMessage): string | undefined {
+  const value = new URL(req.url ?? '', 'http://localhost').searchParams.get('date')
+    ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date())
+  return /^\d{4}-\d{2}-\d{2}$/u.test(value) ? value : undefined
+}
+
+type DailyInsightBatchState = { status: 'running' | 'completed' | 'failed'; count?: number; error?: string }
+const dailyInsightBatches = new Map<string, DailyInsightBatchState>()
+
+/** Read or regenerate one user's reusable daily work facts. */
+async function handleAdminDailyInsight(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!await requireAdmin(ctx, sessions, req, res)) return
+  const url = new URL(req.url ?? '', 'http://localhost')
+  const userId = url.searchParams.get('userId')
+  const workDate = dailyWorkDate(req)
+  if (userId === null || workDate === undefined) { sendJson(res, 400, { message: '需要 userId 和 YYYY-MM-DD 日期' }); return }
+  if (req.method === 'GET') {
+    const insight = await ctx.team.getDailyInsight(userId, workDate)
+    if (insight === undefined) { sendJson(res, 404, { message: '该日期尚未生成工作洞察' }); return }
+    sendJson(res, 200, { insight }); return
+  }
+  if (req.method === 'POST') {
+    try { sendJson(res, 200, { insight: await ctx.team.generateDailyInsight(userId, workDate) }) } catch (error) { sendJson(res, 502, { message: error instanceof Error ? error.message : String(error) }) }
+    return
+  }
+  sendJson(res, 405, { message: '只支持 GET 或 POST 请求' })
+}
+
+/** List every account's work-insight availability for one date. */
+async function handleAdminDailyInsightList(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!await requireAdmin(ctx, sessions, req, res)) return
+  if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
+  const workDate = dailyWorkDate(req)
+  if (workDate === undefined) { sendJson(res, 400, { message: '日期必须为 YYYY-MM-DD' }); return }
+  const rows = await Promise.all(ctx.team.listAdminUsers().map(async user => {
+    const insight = await ctx.team.getDailyInsight(user.id, workDate)
+    if (insight === undefined) return { userId: user.id, status: 'missing' as const }
+    const evidenceCount = insight.evidence.sessions.length + insight.evidence.commits.length
+    return { userId: user.id, status: evidenceCount === 0 ? 'empty' as const : 'ready' as const, generatedAt: insight.generatedAt, evidenceCount, summary: insight.insight.summary }
+  }))
+  sendJson(res, 200, { workDate, rows })
+}
+
+/** Generate every active user's work facts for one date. */
+async function handleAdminDailyInsightBatch(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!await requireAdmin(ctx, sessions, req, res)) return
+  const workDate = dailyWorkDate(req)
+  if (workDate === undefined) { sendJson(res, 400, { message: '日期必须为 YYYY-MM-DD' }); return }
+  if (req.method === 'GET') { sendJson(res, 200, { workDate, ...(dailyInsightBatches.get(workDate) ?? { status: 'idle' }) }); return }
+  if (req.method !== 'POST') { sendJson(res, 405, { message: '只支持 GET 或 POST 请求' }); return }
+  const existing = dailyInsightBatches.get(workDate)
+  if (existing?.status === 'running') { sendJson(res, 202, { workDate, status: 'running' }); return }
+  dailyInsightBatches.set(workDate, { status: 'running' })
+  void ctx.team.generateDailyInsights(workDate).then(count => {
+    dailyInsightBatches.set(workDate, { status: 'completed', count })
+  }).catch((error: unknown) => {
+    dailyInsightBatches.set(workDate, { status: 'failed', error: error instanceof Error ? error.message : String(error) })
+  })
+  sendJson(res, 202, { workDate, status: 'running' })
+}
+
 async function handleAdminSessions(ctx: TeamContext, sessions: AuthSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'GET') { sendJson(res, 405, { message: '只支持 GET 请求' }); return }
   if (!await requireAdmin(ctx, sessions, req, res)) return
@@ -862,9 +923,11 @@ async function handleSyncSession(
     input = await readLimitedJson(req, SESSION_SYNC_REQUEST_MAX_BYTES)
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {
+      writeTeamLog({ level: 'warn', event: 'session.sync.request_too_large', message: 'Session sync request body exceeded the configured limit', userId })
       sendJson(res, 413, { message: 'Session 同步请求体过大' })
       return
     }
+    writeTeamLog({ level: 'warn', event: 'session.sync.invalid_json', message: 'Session sync request body is not valid JSON', userId })
     sendJson(res, 400, { message: '请求格式错误' })
     return
   }
@@ -877,6 +940,7 @@ async function handleSyncSession(
     || !Number.isSafeInteger(input.totalSize) || input.totalSize <= 0
     || ('projectRoot' in input && typeof input.projectRoot !== 'string')
     || ('gitRemote' in input && typeof input.gitRemote !== 'string')) {
+    writeTeamLog({ level: 'warn', event: 'session.sync.invalid_request', message: 'Session sync request fields are invalid', userId })
     sendJson(res, 400, { message: '无效的 Session 同步请求' }); return
   }
   const sessionId = input.sessionId
@@ -886,6 +950,7 @@ async function handleSyncSession(
   const projectRoot = 'projectRoot' in input && typeof input.projectRoot === 'string' && input.projectRoot !== '' ? input.projectRoot : undefined
   const gitRemote = 'gitRemote' in input && typeof input.gitRemote === 'string' && input.gitRemote !== '' ? input.gitRemote : undefined
   if (header.id !== sessionId) {
+    writeTeamLog({ level: 'warn', event: 'session.sync.header_id_mismatch', message: 'Session header id does not match sessionId', sessionId, userId })
     sendJson(res, 400, { ok: false, message: 'Session header id 与 sessionId 不一致' })
     return
   }
@@ -900,11 +965,15 @@ async function handleSyncSession(
   const baseSize = typeof delta.baseSize === 'number' ? delta.baseSize : undefined
   const baseMd5 = typeof delta.baseMd5 === 'string' ? delta.baseMd5 : undefined
   if ((baseSize === undefined) !== (baseMd5 === undefined)) {
+    writeTeamLog({ level: 'warn', event: 'session.sync.invalid_base', message: 'Session delta baseSize and baseMd5 must be supplied together', sessionId, userId })
     sendJson(res, 400, { ok: false, message: 'baseSize 与 baseMd5 必须同时提供' })
     return
   }
   const logBytes = Buffer.from(input.log, 'base64')
-  if (logBytes.byteLength === 0) { sendJson(res, 400, { ok: false, message: '日志内容为空' }); return }
+  if (logBytes.byteLength === 0) {
+    writeTeamLog({ level: 'warn', event: 'session.sync.empty_log', message: 'Decoded session log is empty', sessionId, userId })
+    sendJson(res, 400, { ok: false, message: '日志内容为空' }); return
+  }
   await sessionSyncQueue.run(sessionId, async () => {
     try {
       const location = ctx.sessionPersistence.locate(header)
@@ -1199,12 +1268,11 @@ function injectAdminAuthGuard(html: string): string {
 }
 
 /**
- * Root entry: the Server DSH workspace is operator-only. A bare / redirects to
- * the admin console (or the login page); /?workspace=1 additionally requires an
- * admin session and lands on /team/workspace — the only path that serves the
- * workspace UI (everything else bounces back to the admin console).
+ * Exchange an administrator's team session for the local DSH browser token.
+ * The redirect is intentionally issued only by the loopback Server process;
+ * the LAN proxy exposes no `/team/workspace` route.
  */
-async function handleRootEntry(
+async function handleWorkspaceEntry(
   ctx: TeamContext,
   sessions: AuthSessions,
   req: IncomingMessage,
@@ -1214,14 +1282,13 @@ async function handleRootEntry(
     sendJson(res, 405, { message: '只支持 GET 请求' })
     return
   }
-  const user = await authenticatedUser(ctx, sessions, req)
-  const wantsWorkspace = new URL(req.url ?? '/', 'http://localhost').searchParams.has('workspace')
-  if (wantsWorkspace) {
-    res.writeHead(302, { location: user?.role === 'admin' ? '/team/workspace' : '/team/admin' })
+  if ((await authenticatedUser(ctx, sessions, req))?.role !== 'admin') {
+    res.writeHead(303, { location: '/team/admin' })
     res.end()
     return
   }
-  res.writeHead(302, { location: user !== undefined ? '/team/admin' : '/team/login-page' })
+  const target = new URL(ctx.connection.authenticatedUrl(`http://127.0.0.1:${String(ctx.webServer.port)}`))
+  res.writeHead(303, { 'cache-control': 'no-store', location: `${target.pathname}${target.search}` })
   res.end()
 }
 
@@ -1381,7 +1448,15 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   }),
   ctx.webServer.register({ kind: 'exact', path: '/team/api/admin-ticket', handler: (req, res) => handleAdminTicket(sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/consume', handler: (req, res) => handleAdminConsume(sessions, req, res) }),
-  ctx.webServer.register({ kind: 'exact', path: '/team/api/sync/session', handler: (req, res) => handleSyncSession(ctx, sessions, syncSuccessLogger.record, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/team/api/sync/session', async handler(req, res) {
+    try {
+      await handleSyncSession(ctx, sessions, syncSuccessLogger.record, req, res)
+    } catch (error) {
+      writeTeamLog({ level: 'error', event: 'session.sync.unhandled', message: error instanceof Error ? (error.stack ?? error.message) : String(error) })
+      if (!res.headersSent) sendJson(res, 500, { ok: false, message: 'Session 同步发生内部错误' })
+      else res.destroy()
+    }
+  } }),
   ctx.webServer.register({ kind: 'exact', path: '/team/api/sync/session/status', handler: (req, res) => handleSyncSessionStatus(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/api/sync/sessions', handler: (req, res) => handleSyncSessions(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/api/git/ops', handler: (req, res) => handleGitOps(ctx, sessions, req, res) }),
@@ -1390,9 +1465,12 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin.js', handler: handleAdminScript }),
   ctx.webServer.register({ kind: 'exact', path: '/team/login-page', handler: handleLoginPage }),
   ctx.webServer.register({ kind: 'exact', path: '/team/login.js', handler: handleLoginScript }),
-  ctx.webServer.register({ kind: 'exact', path: '/', handler: (req, res) => handleRootEntry(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/team/workspace', handler: (req, res) => handleWorkspaceEntry(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/enter', handler: (req, res) => handleEnter(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/users', handler: (req, res) => handleAdminUsers(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/team/admin/daily-insight', handler: (req, res) => handleAdminDailyInsight(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/team/admin/daily-insights', handler: (req, res) => handleAdminDailyInsightList(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/team/admin/daily-insights/generate', handler: (req, res) => handleAdminDailyInsightBatch(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sessions', handler: (req, res) => handleAdminSessions(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync-status', handler: (req, res) => handleAdminSyncStatus(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/sync/reconcile', handler: (req, res) => handleAdminSyncReconcile(ctx, sessions, req, res) }),

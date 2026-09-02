@@ -9,6 +9,7 @@ import type {} from "@deepseek-ai/dsh-credentials";
 import { registerTeamRoutes } from "./routes.ts";
 import { reconcileSessions } from './reconcile.ts'
 import { TeamDatabase, type TeamAccount } from './database.ts'
+import { dailyEvidence, summarizeDailyEvidence } from './daily-insights.ts'
 import { hashPassword, isPasswordHash, verifyPassword } from './passwords.ts'
 import { writeTeamLog } from './team-log.ts'
 
@@ -154,6 +155,29 @@ export class TeamService extends Service implements TeamServiceApi {
     return this.database.listSessionAnalytics()
   }
 
+  async getDailyInsight(userId: string, workDate: string) {
+    return this.database.getDailyInsight(userId, workDate)
+  }
+
+  async generateDailyInsight(userId: string, workDate: string) {
+    const user = this.getUser(userId)
+    if (user === undefined) throw new Error(`unknown user ${userId}`)
+    const start = new Date(`${workDate}T00:00:00+08:00`).getTime()
+    if (!Number.isFinite(start)) throw new Error('workDate must use YYYY-MM-DD')
+    const evidence = dailyEvidence(await this.listAnalyticsByUser(userId), await this.listCommitsByUser(userId, start), start, start + 86_400_000)
+    const generated = await summarizeDailyEvidence(user, workDate, evidence)
+    const insight = { userId, workDate, evidence, ...generated, generatedAt: new Date().toISOString() }
+    await this.database.saveDailyInsight(insight)
+    await this.audit({ level: 'info', event: 'daily-insight.generated', userId, model: generated.model, message: `Daily work insight generated for ${workDate}` })
+    return insight
+  }
+
+  async generateDailyInsights(workDate: string): Promise<number> {
+    const users = this.listAdminUsers().filter(user => user.status === 'active')
+    await Promise.all(users.map(user => this.generateDailyInsight(user.id, workDate)))
+    return users.length
+  }
+
   async listAuditLogs(options: { since: number; events?: readonly string[]; limit: number }): Promise<readonly TeamAuditLogRow[]> {
     return this.database.listAuditLogs(options)
   }
@@ -189,9 +213,14 @@ export class TeamService extends Service implements TeamServiceApi {
     // 首次播种或升级遗留明文：任何非哈希的已设置密码都先哈希再落库，
     // 数据库与内存中的账号此后只保存哈希。种子账号不携带密码，
     // 落库前统一补为空哨兵（未设置），由管理员激活后分配密码。
-    const accounts = stored.length === 0
-      ? (users as Omit<TeamAccount, 'password'>[]).map(account => ({ ...account, password: '' }))
-      : stored
+    const accounts = [...stored]
+    const storedIds = new Set(stored.map(account => account.id))
+    for (const seed of users as Omit<TeamAccount, 'password'>[]) {
+      if (storedIds.has(seed.id)) continue
+      const account = { ...seed, password: '' }
+      await this.database.saveAccount(account)
+      accounts.push(account)
+    }
     for (const account of accounts) {
       if (account.password.length === 0 || isPasswordHash(account.password)) continue
       account.password = await hashPassword(account.password)
@@ -211,6 +240,16 @@ export function apply(ctx: TeamContext) {
   ctx.inject(["webServer", "connection", "credentials", "team", "sessionController", "sessionPersistence"], (ctx) => {
     writeTeamLog('Web server ready')
     ctx.effect(() => registerTeamRoutes(ctx as TeamContext));
+    let scheduledDate: string | undefined
+    const runScheduledInsights = (): void => {
+      const now = new Date()
+      const workDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(now)
+      if (now.getHours() !== 17 || now.getMinutes() !== 20 || scheduledDate === workDate) return
+      scheduledDate = workDate
+      void ctx.team.generateDailyInsights(workDate).then(count => ctx.team.audit({ level: 'info', event: 'daily-insight.scheduled', message: `Daily insights generated users=${String(count)}` })).catch(error => ctx.team.audit({ level: 'error', event: 'daily-insight.failed', message: error instanceof Error ? error.message : String(error) }))
+    }
+    const schedule = setInterval(runScheduledInsights, 30_000)
+    ctx.effect(() => () => clearInterval(schedule), 'team-server.daily-insights-schedule')
     // 启动对账：以文件为权威修正 PG 归属/标记漂移。
     void reconcileSessions(ctx as TeamContext).catch(error => {
       writeTeamLog({ level: 'warn', event: 'session.reconcile.failed', message: error instanceof Error ? error.message : String(error) })

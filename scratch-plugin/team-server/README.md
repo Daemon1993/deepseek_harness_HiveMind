@@ -13,7 +13,8 @@ See the [repository README](../../README.md) for the complete platform descripti
 - Session replicas: DSH-native artifacts plus a PostgreSQL ownership index, complete-byte validation, and transactional publication; a lightweight aggregate-only analytics projection is persisted per session (event-level detail stays in the raw Session)
 - Git commits: `/team/api/git/changes` stores author identity, subject, full message, changed-file paths, and line stats; the idempotency key is `(git_remote, commit_hash)`; administrators bind Git emails to platform users, and commits are grouped into a stable `team_projects` entity via `project_id`
 - Administration console: `/team/admin` — Overview (research-value KPI, recent development summary, commit/Session/developer trend, member & project research activity, recent AI collaboration), Users, Projects (trend, merged authors, hot directories, commit-type buckets), and Accounts (roles, Git-email bindings, Session sync and reconcile)
-- Root routing: `/` redirects to administration; only an administrator can reach `/team/workspace`
+- Workspace entry: only a local administrator can open `/team/workspace`; it exchanges the team session for DSH's local browser token.
+- Daily work insights: at 17:20 Asia/Shanghai, active users' Session and Git evidence is summarized by a Server-only LLM and replaces that user's record for the day. Administrators can view or regenerate it from Accounts. Copy `.env.example` to `.env` and set `TEAM_INSIGHT_API_KEY` before enabling generation.
 
 ## Build and package
 
@@ -43,6 +44,8 @@ After publication, the Server stores a content-free Session analytics snapshot i
 
 The Client uploads commit history independently through `git log`. The Server stores hash, author, subject, message, origin remote, changed-file paths, timestamps, and change counts. Overview, User, and Project pages aggregate Session snapshots and Git rows by user id or Git remote without claiming that a commit belongs to a Session. Git-only projects remain visible; commits without an origin contribute only to User analytics. The Server backfills a missing snapshot when an administrator first loads analytics for an older Session; a Session timeline still reads the native Session artifact on demand.
 
-Start the local Server with `./start-local.ps1`; it listens on port 3081 by default.
+`pnpm start:local` and `pnpm start:lan` start both the loopback Server and the route-restricted LAN proxy. `pnpm start:loopback` starts only the Server on `127.0.0.1:3081`. The loopback launcher stops an existing source-launched DSH Web process on port 3081, refuses to stop an unrelated port owner, and never exposes the general DSH Web listener to the LAN.
+
+Set `TEAM_SERVER_LAN_HOST` to one IPv4 address owned by the Server machine and optionally set `TEAM_SERVER_LAN_PORT` (default `3082`), then run `pnpm start:local`. The LAN listener accepts only `/team` and `/team/*`, rejects foreign Host/Origin values and cross-site browser requests, and forwards accepted traffic to `127.0.0.1:3081`. Allow the configured LAN port through Windows Firewall; keep port 3081 closed to the LAN.
 
 Run the focused regression tests with `pnpm test`.
