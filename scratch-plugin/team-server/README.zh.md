@@ -13,7 +13,8 @@
 - Session 副本：DSH 原生工件、PostgreSQL 归属索引、完整字节校验与事务发布；每会话持久化一份轻量的纯聚合分析投影（事件级明细保留在原始 Session）
 - Git 提交：`/team/api/git/changes` 存储作者身份、subject、完整 message、变更文件路径与增删统计；幂等键为 `(git_remote, commit_hash)`；管理员把 Git 邮箱绑定到平台用户，提交通过 `project_id` 归入稳定的 `team_projects` 实体
 - 管理后台：`/team/admin`——总览（研发价值 KPI、本周期研发动态、提交/Session/开发者趋势、成员与项目研发活动、最近 AI 协作）、用户、项目（提交趋势、作者归并、热目录、提交类型）、账号与权限（角色、Git 邮箱映射、Session 同步与对账）
-- 根路径：`/` 重定向到管理后台，只有管理员能访问 `/team/workspace`
+- 工作台入口：只有 Server 本机的管理员能打开 `/team/workspace`；该入口会用团队登录态换取本机 DSH 浏览器令牌。
+- 每日工作洞察：每天 Asia/Shanghai 17:20，系统用 Server 端 LLM 根据活跃用户的 Session 与 Git 证据生成并覆盖当天记录；管理员可在“账号与权限”中查看或手动重算。启用前复制 `.env.example` 为 `.env`，并只在 Server 中设置 `TEAM_INSIGHT_API_KEY`。
 
 ## 构建与打包
 
@@ -43,6 +44,8 @@ PostgreSQL 的 `BIGINT` Session 文件大小会在查询时转换为整数，再
 
 Client 通过 `git log` 独立上传提交历史。Server 存储 hash、作者、subject、message、origin remote、变更文件路径、时间和增删统计。总览、用户和项目页面按用户 ID 或 Git remote 分别聚合 Session 快照与 Git 行，不声称某条 commit 属于某个 Session。只有 Git 提交的项目仍会显示；没有 origin 的提交只进入用户统计。管理员首次查看缺少快照的历史 Session 时，Server 会补建快照；单个 Session 时间线仍按需读取原生 Session 工件。
 
-通过 `./start-local.ps1` 启动本地 Server，默认监听 3081 端口。
+`pnpm start:local` 和 `pnpm start:lan` 会同时启动 loopback Server 与限制路由的 LAN 代理。`pnpm start:loopback` 只启动监听 `127.0.0.1:3081` 的 Server。loopback launcher 会停止占用 3081 端口的现有源码启动 DSH Web 进程，拒绝停止无关的端口占用进程，并且绝不向 LAN 暴露通用 DSH Web listener。
+
+将 `TEAM_SERVER_LAN_HOST` 设置为 Server 机器持有的一个 IPv4 地址，并可选设置 `TEAM_SERVER_LAN_PORT`（默认 `3082`），然后运行 `pnpm start:local`。LAN listener 只接受 `/team` 和 `/team/*`，拒绝外部 Host/Origin 值及跨站浏览器请求，并把通过校验的流量转发到 `127.0.0.1:3081`。在 Windows 防火墙中放行配置的 LAN 端口；不要向局域网开放 3081 端口。
 
 通过 `pnpm test` 运行聚焦回归测试。

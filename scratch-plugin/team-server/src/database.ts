@@ -1,6 +1,6 @@
 import { Pool } from 'pg'
 import { randomUUID } from 'node:crypto'
-import type { TeamAuditLogRow, TeamCodeChange, TeamCodeChangeInput, TeamGitEmailBinding, TeamLogRecord, TeamProjectAuthor, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
+import type { TeamAuditLogRow, TeamCodeChange, TeamCodeChangeInput, TeamDailyInsight, TeamGitEmailBinding, TeamLogRecord, TeamProjectAuthor, TeamRole, TeamSessionAnalytics, TeamSyncedSession, TeamSyncedSessionDetail, TeamSessionSyncState, TeamUser } from './types.ts'
 import { readTeamConfig } from './config.ts'
 
 export type TeamAccount = TeamUser & { password: string }
@@ -103,6 +103,17 @@ export class TeamDatabase {
       )
     `)
     await this.pool.query('CREATE INDEX IF NOT EXISTS team_session_analytics_project_idx ON team_session_analytics (git_remote, project_root, last_active_at DESC)')
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS team_user_daily_insights (
+        user_id TEXT NOT NULL REFERENCES team_users(id) ON DELETE CASCADE,
+        work_date DATE NOT NULL,
+        evidence JSONB NOT NULL,
+        insight JSONB NOT NULL,
+        model TEXT,
+        generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, work_date)
+      )
+    `)
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS team_git_ops (
         id BIGSERIAL PRIMARY KEY,
@@ -395,6 +406,25 @@ export class TeamDatabase {
       lastActiveAt: Number(row.last_active_at),
       metrics: row.metrics,
     }))
+  }
+
+  /** Replace one user's generated work facts for a local calendar day. */
+  async saveDailyInsight(insight: TeamDailyInsight): Promise<void> {
+    await this.client().query(
+      `INSERT INTO team_user_daily_insights (user_id, work_date, evidence, insight, model, generated_at)
+       VALUES ($1, $2::date, $3::jsonb, $4::jsonb, $5, NOW())
+       ON CONFLICT (user_id, work_date) DO UPDATE SET evidence = EXCLUDED.evidence, insight = EXCLUDED.insight, model = EXCLUDED.model, generated_at = NOW()`,
+      [insight.userId, insight.workDate, JSON.stringify(insight.evidence), JSON.stringify(insight.insight), insight.model ?? null],
+    )
+  }
+
+  /** Read one day's reusable work facts. */
+  async getDailyInsight(userId: string, workDate: string): Promise<TeamDailyInsight | undefined> {
+    const result = await this.client().query<{ evidence: TeamDailyInsight['evidence']; insight: TeamDailyInsight['insight']; model: string | null; generated_at: Date }>(
+      'SELECT evidence, insight, model, generated_at FROM team_user_daily_insights WHERE user_id = $1 AND work_date = $2::date', [userId, workDate],
+    )
+    const row = result.rows[0]
+    return row === undefined ? undefined : { userId, workDate, evidence: row.evidence, insight: row.insight, generatedAt: row.generated_at.toISOString(), ...(row.model === null ? {} : { model: row.model }) }
   }
 
   /** Record one batch of Git operation metadata. */

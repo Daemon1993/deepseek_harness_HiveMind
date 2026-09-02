@@ -108,6 +108,19 @@ export interface TeamSessionAnalytics {
   metrics: SessionMetrics
 }
 
+/** One user's reusable, LLM-derived work facts for one local calendar day. */
+export interface TeamDailyInsight {
+  userId: string
+  workDate: string
+  evidence: {
+    sessions: { title: string; projectName?: string; lastActiveAt: number; toolCalls: number; errors: number }[]
+    commits: { subject?: string; project?: string; files: number; insertions: number; deletions: number; time: number }[]
+  }
+  insight: { summary: string; completed: string[]; inProgress: string[]; blockers: string[]; topics: string[] }
+  generatedAt: string
+  model?: string
+}
+
 /** One Git operation record uploaded by a Local DSH. */
 export interface TeamGitOpInput {
   action: string
@@ -217,6 +230,9 @@ export interface TeamServiceApi {
   listSyncStatus(): Promise<readonly TeamSessionSyncState[]>
   saveSessionAnalytics(snapshot: TeamSessionAnalytics): Promise<void>
   listSessionAnalytics(): Promise<readonly TeamSessionAnalytics[]>
+  getDailyInsight(userId: string, workDate: string): Promise<TeamDailyInsight | undefined>
+  generateDailyInsight(userId: string, workDate: string): Promise<TeamDailyInsight>
+  generateDailyInsights(workDate: string): Promise<number>
   listAuditLogs(options: { since: number; events?: readonly string[]; limit: number }): Promise<readonly TeamAuditLogRow[]>
   audit(entry: TeamAuditLogInput): Promise<void>
 }

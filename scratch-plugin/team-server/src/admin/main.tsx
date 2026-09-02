@@ -6,9 +6,10 @@ import type { ColumnsType } from 'antd/es/table'
 type Role = 'admin' | 'developer' | 'reviewer' | 'user'
 type Status = 'pending' | 'active' | 'rejected' | 'disabled'
 type User = { id: string; email?: string; name: string; status: Status; role: Role; hasPassword?: boolean }
+type DailyInsight = { userId: string; workDate: string; generatedAt: string; model?: string; evidence: { sessions: { title: string; projectName?: string; lastActiveAt?: string; toolCalls: number; errors: number }[]; commits: { subject?: string; project?: string; files: number; insertions: number; deletions: number }[] }; insight: { summary: string; completed: string[]; inProgress: string[]; blockers: string[]; topics: string[] } }
 type SessionOwner = { sessionId: string; userId: string; userName: string; email?: string; createdAt: string; lastActiveAt: string; title?: string; projectName?: string; gitRemote?: string; updatedAt?: number; blank?: boolean }
 type Phase = 'checking' | 'ready'
-type Section = 'dashboard' | 'users' | 'projects' | 'accounts'
+type Section = 'dashboard' | 'users' | 'projects' | 'accounts' | 'capabilities' | 'workbench'
 
 // ── 总览类型（/team/admin/overview）──────────────────────────
 type OverviewSummary = {
@@ -211,6 +212,16 @@ function AdminRoot() {
   }
   useEffect(() => { void checkSession() }, [])
   useEffect(() => { if (section === 'dashboard' && canEdit) void loadSessions() }, [section, canEdit])
+  useEffect(() => {
+    if (section !== 'workbench') return
+    if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
+      window.location.assign('/team/workspace')
+      return
+    } else {
+      void toast.warning('DSH 工作台只能在 Server 本机的管理后台中打开')
+    }
+    setSection('dashboard')
+  }, [section, toast])
 
   const logout = async (): Promise<void> => { await fetch('/team/logout', { method: 'POST' }); window.location.replace('/team/login-page') }
   const save = async (id: string, patch: Partial<User> = {}): Promise<void> => {
@@ -246,14 +257,26 @@ function AdminRoot() {
       ? { title: '用户', description: '按成员查看参与项目、研发活动与 AI 消耗' }
     : section === 'projects'
       ? { title: '项目', description: '按 Git 项目查看提交趋势、作者分布与 AI 使用' }
-      : { title: '账号与权限', description: '账号申请审核、角色权限、Git 邮箱映射与同步状态' }
+      : section === 'accounts'
+        ? { title: '账号与权限', description: '账号申请审核、角色权限、Git 邮箱映射与同步状态' }
+        : section === 'workbench'
+          ? { title: 'DSH 工作台', description: '仅管理员可在 Server 本机打开完整 DSH 工作台' }
+        : { title: '平台能力', description: '当前数据范围、AI 洞察能力与后续建设方向' }
   const menuItems = [
     { key: 'dashboard' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-blue" />总览</span> },
     { key: 'users' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-purple" />用户</span> },
     { key: 'projects' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-green" />项目</span> },
     { key: 'accounts' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-orange" />账号与权限</span> },
+    { key: 'capabilities' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-blue" />平台能力</span> },
+    { key: 'workbench' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-green" />DSH 工作台</span> },
   ]
-  return <><Layout className="page">{contextHolder}<Layout.Sider width={240} theme="light" className="adminSider"><div className="brand"><div className="brandMark">✦</div><div><Typography.Text strong className="aiBrandName">HiveMind · AI 研发平台</Typography.Text><Typography.Text type="secondary" className="blockText">团队智能控制台</Typography.Text></div></div><Menu mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={canEdit ? menuItems : [menuItems[3]!]} /><div className="siderUser"><Avatar className="aiAvatar">{currentUser?.name.slice(0, 1)}</Avatar><div><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text type="secondary" className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardSection sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : <><AccountsPanel users={users} loading={loading} columns={columns} />{canEdit && <GitEmailsPanel />}{canEdit && <SyncStatusPanel />}</>}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
+  return <><Layout className="page">{contextHolder}<Layout.Sider width={252} theme="dark" className="adminSider"><div className="brand"><div className="brandMark">H</div><div><Typography.Text strong className="aiBrandName">HiveMind</Typography.Text><Typography.Text className="blockText brandCaption">AI 研发管理平台</Typography.Text></div></div><div className="menuCaption">工作台</div><Menu theme="dark" mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={canEdit ? menuItems : [menuItems[3]!]} /><div className="siderUser"><Avatar className="aiAvatar">{currentUser?.name.slice(0, 1)}</Avatar><div className="siderUserCopy"><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div><span className="onlineDot" title="服务在线" /></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Text className="eyebrow">HIVEMIND CONTROL CENTER</Typography.Text><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space className="topbarActions"><span className="environmentBadge"><i />Server 在线</span><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardSection sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : section === 'capabilities' ? <CapabilitiesPanel /> : <><AccountsPanel users={users} loading={loading} columns={columns} />{canEdit && <GitEmailsPanel />}{canEdit && <SyncStatusPanel />}</>}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
+}
+
+function DailyInsightDrawer({ insight, userName, onClose }: { insight: DailyInsight | undefined; userName: string; onClose: () => void }) {
+  if (insight === undefined) return null
+  const section = (title: string, items: string[]) => items.length === 0 ? null : <div style={{ marginTop: 18 }}><Typography.Text strong>{title}</Typography.Text><ul>{items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}</ul></div>
+  return <Drawer title={`${userName} · ${insight.workDate} 工作洞察`} width={620} open onClose={onClose}><Typography.Paragraph>{insight.insight.summary}</Typography.Paragraph>{section('已完成', insight.insight.completed)}{section('进行中', insight.insight.inProgress)}{section('阻塞与风险', insight.insight.blockers)}{section('技术与主题', insight.insight.topics)}<Typography.Title level={5}>证据摘要</Typography.Title><Typography.Paragraph type="secondary">会话 {insight.evidence.sessions.length} 个 · Git 提交 {insight.evidence.commits.length} 个 · 生成于 {new Date(insight.generatedAt).toLocaleString()}</Typography.Paragraph><Collapse items={[{ key: 'sessions', label: '关联会话', children: insight.evidence.sessions.length === 0 ? '无' : insight.evidence.sessions.map(session => <p key={`${session.title}-${session.lastActiveAt}`}>{session.title} · 工具 {session.toolCalls} · 错误 {session.errors}</p>) }, { key: 'commits', label: '关联提交', children: insight.evidence.commits.length === 0 ? '无' : insight.evidence.commits.map((commit, index) => <p key={`${commit.subject}-${index}`}>{commit.subject ?? '无提交说明'} · +{commit.insertions} / -{commit.deletions}</p>) }]} /></Drawer>
 }
 
 /** 会话详情抽屉：完整指标 + 分组时间线 + 工具耗时。 */
@@ -789,28 +812,126 @@ function DimensionDetail({
   </Space>
 }
 
+function CapabilitiesPanel() {
+  const current = [
+    ['统一身份与权限', '公司账号登录、管理员角色、Client Token 与 Server 侧密钥隔离'],
+    ['AI 研发过程', 'Session、模型请求、Token、工具调用、失败状态与活跃时长'],
+    ['项目协作数据', 'Git 提交、代码增删、项目成员、关联 Session 与同步状态'],
+    ['安全运行基础', '局域网受限访问、Server Gateway、会话同步与运行日志'],
+  ]
+  const ai = [
+    ['Session 自动摘要', '提取任务目标、执行结果、风险、技术标签与待跟进事项'],
+    ['研发周报与项目日报', '将 Session、Git 与模型数据聚合为可读的团队进展'],
+    ['异常模式识别', '识别重复构建错误、同步失败、工具失败和异常 Token 消耗'],
+    ['知识沉淀', '从高价值会话中提取可复用 Prompt、Skill、解决方案与实践'],
+  ]
+  const roadmap = [
+    ['近期', '稳定性与可观测性', '同步重试、Client 健康检查、错误归因、版本与网络诊断'],
+    ['下一阶段', 'AI 数据洞察', '摘要、标签、日报、成本分析、异常趋势和项目画像'],
+    ['长期', '企业治理与集成', '部门/项目权限、额度、审计、SSO、GitLab 与企业 IM 集成'],
+  ]
+  const capabilityCard = (item: string[], tone: string) => <div className={`capabilityItem ${tone}`} key={item[0]}><span className="capabilityMark" /><div><Typography.Text strong>{item[0]}</Typography.Text><Typography.Paragraph type="secondary">{item[1]}</Typography.Paragraph></div></div>
+  return <div className="capabilitiesPage">
+    <section className="capabilityHero"><Typography.Text className="eyebrow">HIVEMIND PLATFORM</Typography.Text><Typography.Title level={2}>企业内部 AI 研发协作与治理平台</Typography.Title><Typography.Paragraph>将分散在 Client、Session、模型调用和 Git 项目中的研发过程数据，沉淀为可管理、可追踪、可复用的团队资产。</Typography.Paragraph><Space wrap><Tag color="blue">安全模型入口</Tag><Tag color="cyan">研发过程数据</Tag><Tag color="purple">AI 洞察与知识沉淀</Tag></Space></section>
+    <Row gutter={[18, 18]}><Col xs={24} xl={12}><Card title="当前已具备的数据与能力" className="capabilityCard">{current.map(item => capabilityCard(item, 'available'))}</Card></Col><Col xs={24} xl={12}><Card title="可由 AI 自动提取的洞察" className="capabilityCard">{ai.map(item => capabilityCard(item, 'ai'))}</Card></Col></Row>
+    <Card title="迭代路线图" className="capabilityCard roadmapCard"><div className="roadmap">{roadmap.map(([stage, title, detail]) => <div className="roadmapItem" key={stage}><span>{stage}</span><div><Typography.Text strong>{title}</Typography.Text><Typography.Paragraph type="secondary">{detail}</Typography.Paragraph></div></div>)}</div></Card>
+  </div>
+}
+
+type DailyInsightStatus = { userId: string; status: 'missing' | 'empty' | 'ready'; generatedAt?: string; evidenceCount?: number; summary?: string }
+
 function UserDataPanel({ onOpenSession }: { onOpenSession: (d: SessionDetail) => void }) {
   const [days, setDays] = useState<1 | 7 | 30>(7)
   const { data, loading, error } = useOverview(days)
   const [userDetail, setUserDetail] = useState<UserDetailRef>()
+  const [dailyInsight, setDailyInsight] = useState<DailyInsight>()
+  const [insightUserName, setInsightUserName] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [statusLoading, setStatusLoading] = useState(false)
+  const [insightStatuses, setInsightStatuses] = useState<Record<string, DailyInsightStatus>>({})
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date())
+  const [workDate, setWorkDate] = useState(today)
+  const shiftDate = (date: string, daysToAdd: number): string => {
+    const value = new Date(`${date}T12:00:00+08:00`)
+    value.setUTCDate(value.getUTCDate() + daysToAdd)
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(value)
+  }
+  const loadInsightStatuses = async (date: string): Promise<void> => {
+    setStatusLoading(true)
+    try {
+      const response = await fetch(`/team/admin/daily-insights?date=${encodeURIComponent(date)}`)
+      const body = await readJson<{ rows?: DailyInsightStatus[] }>(response)
+      if (!response.ok || body.rows === undefined) throw new Error(body.message ?? '洞察状态加载失败')
+      setInsightStatuses(Object.fromEntries(body.rows.map(row => [row.userId, row])))
+    } catch (reason) {
+      setInsightStatuses({})
+      void message.error(reason instanceof Error ? reason.message : '洞察状态加载失败')
+    } finally { setStatusLoading(false) }
+  }
+  useEffect(() => {
+    setDailyInsight(undefined)
+    void loadInsightStatuses(workDate)
+    void fetch(`/team/admin/daily-insights/generate?date=${encodeURIComponent(workDate)}`).then(readJson<{ status?: string }>).then(body => setGenerating(body.status === 'running')).catch(() => undefined)
+  }, [workDate])
+  const openDailyInsight = async (user: OverviewUser): Promise<void> => {
+    const status = insightStatuses[user.userId]
+    if (status === undefined || status.status === 'missing') { void message.info(`${workDate} 尚未生成该成员的工作洞察`); return }
+    const response = await fetch(`/team/admin/daily-insight?userId=${encodeURIComponent(user.userId)}&date=${encodeURIComponent(workDate)}`)
+    const body = await readJson<{ insight?: DailyInsight }>(response)
+    if (!response.ok || body.insight === undefined) { void message.error(body.message ?? '工作洞察加载失败'); return }
+    setInsightUserName(user.userName); setDailyInsight(body.insight)
+  }
+  const generateAll = async (): Promise<void> => {
+    setGenerating(true)
+    const response = await fetch(`/team/admin/daily-insights/generate?date=${encodeURIComponent(workDate)}`, { method: 'POST' })
+    const body = await readJson<{ status?: string }>(response)
+    if (!response.ok || body.status !== 'running') { setGenerating(false); void message.error(body.message ?? '全员生成启动失败') }
+  }
+  useEffect(() => {
+    if (!generating) return
+    const timer = window.setInterval(() => { void fetch(`/team/admin/daily-insights/generate?date=${encodeURIComponent(workDate)}`).then(readJson<{ status?: string; count?: number; error?: string }>).then(body => {
+      if (body.status === 'running') return
+      setGenerating(false)
+      if (body.status === 'completed') { void loadInsightStatuses(workDate); void message.success(`已更新 ${String(body.count ?? 0)} 位活跃用户的 ${workDate} 工作洞察`) }
+      else void message.error(body.error ?? '全员生成失败')
+    }).catch(() => { setGenerating(false); void message.error('无法读取生成状态') }) }, 2_000)
+    return () => window.clearInterval(timer)
+  }, [generating, workDate])
   const columns: ColumnsType<OverviewUser> = [
-    { title: '用户', render: (_, user) => <Space><Avatar shape="square">{user.userName.slice(0, 1)}</Avatar><div><Typography.Text strong>{user.userName}</Typography.Text><Typography.Text type="secondary" className="blockText">{user.userId}</Typography.Text></div></Space> },
+    { title: '成员', width: 190, onCell: () => ({ className: 'memberCell' }), render: (_, user) => <Space className="memberIdentity" size={10}><Avatar shape="square">{user.userName.slice(0, 1)}</Avatar><div><Typography.Text strong ellipsis={{ tooltip: user.userName }} className="memberName">{user.userName}</Typography.Text><Typography.Text type="secondary" ellipsis={{ tooltip: user.userId }} className="memberId">{user.userId}</Typography.Text></div></Space> },
     { title: '参与项目', dataIndex: 'projects', width: 80 },
     { title: 'Commit', width: 70, render: (_, user) => user.commits.length || '—' },
     { title: '代码变更', width: 110, render: (_, user) => user.commits.length === 0 ? '—' : <span><Typography.Text type="success">+{user.insertions}</Typography.Text> <Typography.Text type="danger">-{user.deletions}</Typography.Text></span> },
     { title: 'AI Session', dataIndex: 'sessions', width: 85 },
     { title: 'AI 工具调用', dataIndex: 'toolCalls', width: 90 },
-    { title: '最近活跃', width: 130, render: (_, user) => user.lastActiveAt === 0 ? '—' : <Typography.Text type="secondary">{new Date(user.lastActiveAt).toLocaleDateString()}</Typography.Text> },
-    { title: '操作', width: 90, render: (_, user) => <Button type="link" onClick={() => setUserDetail({ userId: user.userId, userName: user.userName })}>详情</Button> },
+    { title: '最近活跃', width: 120, render: (_, user) => user.lastActiveAt === 0 ? '—' : <Typography.Text type="secondary">{new Date(user.lastActiveAt).toLocaleDateString()}</Typography.Text> },
+    { title: `${workDate.slice(5)} 洞察`, width: 165, render: (_, user) => {
+      const status = insightStatuses[user.userId]
+      if (statusLoading) return <Typography.Text type="secondary">读取中…</Typography.Text>
+      if (status === undefined || status.status === 'missing') return <Tag>未生成</Tag>
+      if (status.status === 'empty') return <Space size={6}><Tag color="default">无活动</Tag><Typography.Text type="secondary">已分析</Typography.Text></Space>
+      return <Space size={6}><Tag color="green">已生成</Tag><Typography.Text type="secondary">{status.evidenceCount} 条证据</Typography.Text></Space>
+    } },
+    { title: '操作', width: 145, render: (_, user) => {
+      const available = insightStatuses[user.userId]?.status !== 'missing' && insightStatuses[user.userId] !== undefined
+      return <Space size={0}><Button type="link" onClick={() => setUserDetail({ userId: user.userId, userName: user.userName })}>详情</Button><Button type="link" disabled={!available} onClick={() => void openDailyInsight(user)}>查看洞察</Button></Space>
+    } },
   ]
   const totalTokens = data?.users.reduce((sum, user) => sum + user.totalTokens, 0) ?? 0
   const totalCommits = data?.users.reduce((sum, user) => sum + user.commits.length, 0) ?? 0
   const totalSessions = data?.users.reduce((sum, user) => sum + user.sessions, 0) ?? 0
   const totalProjects = new Set(data?.users.flatMap(user => user.commits.map(c => c.gitRemote))).size
+  const readyCount = Object.values(insightStatuses).filter(status => status.status === 'ready').length
+  const analyzedCount = Object.values(insightStatuses).filter(status => status.status !== 'missing').length
   return <Space direction="vertical" size={18} className="analyticsPage"><DimensionToolbar days={days} onChange={setDays} />{error && <Alert type="error" showIcon message={error} />}
     <Row gutter={[16, 16]} className="analyticsStats"><Col xs={12} lg={6}><Card loading={loading}><Statistic title="参与项目" value={totalProjects} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Commit" value={totalCommits} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="AI Sessions" value={totalSessions} /></Card></Col><Col xs={12} lg={6}><Card loading={loading}><Statistic title="Token" value={fmtNum(totalTokens)} /></Card></Col></Row>
-    <Card title="成员研发活动" className="analyticsCard"><Table rowKey="userId" loading={loading} columns={columns} dataSource={data?.users ?? []} pagination={{ pageSize: 10, showSizeChanger: false }} expandable={{ expandedRowRender: user => <DimensionDetail models={user.models} tools={user.tools} commits={user.commits} sessions={(data?.recentSessions ?? []).filter(session => session.userId === user.userId)} onOpenSession={onOpenSession} /> }} /></Card>
+    <Card title={<div><Typography.Text strong>成员研发活动</Typography.Text><Typography.Text type="secondary" className="blockText insightCardSubtitle">统计周期看活动趋势，洞察日期查看单日工作事实</Typography.Text></div>} className="analyticsCard insightCard" extra={<div className="insightToolbar"><span className="insightDateLabel">洞察日期</span><Button size="small" onClick={() => setWorkDate(shiftDate(today, -1))}>昨天</Button><Button size="small" onClick={() => setWorkDate(today)}>今天</Button><Input type="date" max={today} value={workDate} onChange={event => event.target.value && setWorkDate(event.target.value)} /><Button type="primary" loading={generating} onClick={() => void generateAll()}>{generating ? '后台生成中' : '生成全员洞察'}</Button></div>}>
+      {generating && <Alert className="insightJobAlert" type="info" showIcon message={`正在后台生成 ${workDate} 的全员工作洞察`} description="可以继续浏览当前页面，完成后状态会自动刷新。" />}
+      <div className="insightSummary"><span>选中日期：<strong>{workDate}</strong></span><span>已分析 <strong>{analyzedCount}</strong> 人</span><span>有工作证据 <strong>{readyCount}</strong> 人</span></div>
+      <Table rowKey="userId" loading={loading} columns={columns} dataSource={data?.users ?? []} scroll={{ x: 1080 }} pagination={{ pageSize: 10, showSizeChanger: false }} expandable={{ expandedRowRender: user => <DimensionDetail models={user.models} tools={user.tools} commits={user.commits} sessions={(data?.recentSessions ?? []).filter(session => session.userId === user.userId)} onOpenSession={onOpenSession} /> }} />
+    </Card>
     <UserDetailDrawer detail={userDetail} onClose={() => setUserDetail(undefined)} />
+    <DailyInsightDrawer insight={dailyInsight} userName={insightUserName} onClose={() => setDailyInsight(undefined)} />
   </Space>
 }
 
@@ -989,4 +1110,4 @@ function SessionOwnershipPanel({ sessions, loading, onOpenSession }: { sessions:
 }
 
 function Centered({ children }: { children: React.ReactNode }) { return <div className="centered">{children}</div> }
-createRoot(document.getElementById('root')!).render(<ConfigProvider theme={{ token: { colorPrimary: '#1677ff', borderRadius: 10 }, components: { Layout: { siderBg: '#fff', headerBg: '#fff' }, Menu: { itemBorderRadius: 8 } } }}><AntApp><AdminRoot /></AntApp></ConfigProvider>)
+createRoot(document.getElementById('root')!).render(<ConfigProvider theme={{ token: { colorPrimary: '#2563eb', colorText: '#172033', colorTextSecondary: '#64748b', colorBorderSecondary: '#e5eaf1', borderRadius: 10, fontFamily: 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif' }, components: { Layout: { siderBg: '#111827', headerBg: '#fff' }, Menu: { darkItemBg: '#111827', darkItemSelectedBg: '#1d4ed8', darkItemHoverBg: '#1f2937', itemBorderRadius: 8 }, Card: { headerFontSize: 15 }, Table: { headerBg: '#f8fafc', headerColor: '#475569', rowHoverBg: '#f8fbff' } } }}><AntApp><AdminRoot /></AntApp></ConfigProvider>)

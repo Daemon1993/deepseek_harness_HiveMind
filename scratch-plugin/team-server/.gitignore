@@ -2,4 +2,5 @@
 .env.server
 lib/
 node_modules/
+logs/
 *.tgz

@@ -10636,6 +10636,9 @@ importers:
       '@deepseek-ai/dsh-session-title':
         specifier: workspace:^
         version: link:../../packages/session/session-title
+      '@deepseek-ai/dsh-session-title-llm':
+        specifier: workspace:^
+        version: link:../../packages/session/session-title-llm
       '@deepseek-ai/dsh-settings':
         specifier: workspace:^
         version: link:../../packages/settings/settings
