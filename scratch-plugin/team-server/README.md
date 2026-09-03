@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The Server plugin for the HiveMind team AI engineering platform. It owns authentication, the model gateway, Session replicas, Git records, and the administration console.
+The Server plugin for HiveMind, a team AI workbench for multiple employees: unified accounts and model gateway, Session archiving, Git commit collection, and the administration console where usage and development-trajectory data become observable.
 
 See the [repository README](../../README.md) for the complete platform description.
 
@@ -12,7 +12,7 @@ See the [repository README](../../README.md) for the complete platform descripti
 - Model gateway: raw forwarding through `/team/api/model/chat/completions` and `/team/api/model/files*` with the Server credential; responses are passed through without extracting usage
 - Session replicas: DSH-native artifacts plus a PostgreSQL ownership index, complete-byte validation, and transactional publication; a lightweight aggregate-only analytics projection is persisted per session (event-level detail stays in the raw Session)
 - Git commits: `/team/api/git/changes` stores author identity, subject, full message, changed-file paths, and line stats; the idempotency key is `(git_remote, commit_hash)`; administrators bind Git emails to platform users, and commits are grouped into a stable `team_projects` entity via `project_id`
-- Administration console: `/team/admin` — Overview (research-value KPI, recent development summary, commit/Session/developer trend, member & project research activity, recent AI collaboration), Users, Projects (trend, merged authors, hot directories, commit-type buckets), and Accounts (roles, Git-email bindings, Session sync and reconcile)
+- Administration console: `/team/admin` — Overview (team pulse: active projects/developers, AI collaboration, health, per-member/per-project/per-tool/per-model rankings), Users (per-member projects, activity and AI cost), Projects (per-remote trend, per-author commit groups, hot directories, commit-type buckets), and Accounts (roles, Git-email bindings, Session sync and reconcile), plus a capabilities/roadmap page and a DSH workspace entry for the local administrator
 - Workspace entry: only a local administrator can open `/team/workspace`; it exchanges the team session for DSH's local browser token.
 - Daily work insights: at 17:20 Asia/Shanghai, active users' Session and Git evidence is summarized by a Server-only LLM and replaces that user's record for the day. Administrators can view or regenerate it from Accounts. Copy `.env.example` to `.env` and set `TEAM_INSIGHT_API_KEY` before enabling generation.
 

@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-服务器侧插件（HiveMind 团队 AI 研发平台的一部分）。负责认证、模型网关、Session 副本、Git 记录与管理后台。
+服务器侧插件（HiveMind 团队 AI 工作台的一部分）：统一账号与模型网关、Session 副本、Git 提交采集，以及把用量与研发轨迹变成可观测数据的管理后台。
 
 完整平台说明见[仓库 README](../../README.zh.md)。
 
@@ -12,7 +12,7 @@
 - 模型网关：通过 `/team/api/model/chat/completions` 和 `/team/api/model/files*` 原样转发，并使用 Server 凭据；响应透传，不提取 usage
 - Session 副本：DSH 原生工件、PostgreSQL 归属索引、完整字节校验与事务发布；每会话持久化一份轻量的纯聚合分析投影（事件级明细保留在原始 Session）
 - Git 提交：`/team/api/git/changes` 存储作者身份、subject、完整 message、变更文件路径与增删统计；幂等键为 `(git_remote, commit_hash)`；管理员把 Git 邮箱绑定到平台用户，提交通过 `project_id` 归入稳定的 `team_projects` 实体
-- 管理后台：`/team/admin`——总览（研发价值 KPI、本周期研发动态、提交/Session/开发者趋势、成员与项目研发活动、最近 AI 协作）、用户、项目（提交趋势、作者归并、热目录、提交类型）、账号与权限（角色、Git 邮箱映射、Session 同步与对账）
+- 管理后台：`/team/admin`——总览（团队脉搏：活跃项目/开发者、AI 协作、运行健康、成员/项目/工具/模型用量排行）、用户（按成员看参与项目、研发活动与 AI 消耗）、项目（按 remote 看趋势、按作者分组的提交、热目录、提交类型）、账号与权限（角色、Git 邮箱映射、Session 同步与对账），另含平台能力/路线图页与本机管理员的 DSH 工作台入口
 - 工作台入口：只有 Server 本机的管理员能打开 `/team/workspace`；该入口会用团队登录态换取本机 DSH 浏览器令牌。
 - 每日工作洞察：每天 Asia/Shanghai 17:20，系统用 Server 端 LLM 根据活跃用户的 Session 与 Git 证据生成并覆盖当天记录；管理员可在“账号与权限”中查看或手动重算。启用前复制 `.env.example` 为 `.env`，并只在 Server 中设置 `TEAM_INSIGHT_API_KEY`。
 

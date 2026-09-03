@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-员工侧插件（HiveMind 团队 AI 研发平台的一部分）。提供登录转发、凭证托管、Session 和 Git 同步与状态 UI。
+员工侧插件（HiveMind 团队 AI 工作台的一部分）。提供登录转发、凭证托管、Session 和 Git 同步与状态 UI。
 
 完整说明见[仓库 README](../../README.zh.md)。
 

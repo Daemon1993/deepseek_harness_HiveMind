@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The employee-side plugin for the HiveMind team AI engineering platform. It provides login forwarding, credential storage, Session and Git synchronization, and status UI.
+The employee-side plugin for HiveMind, a team AI workbench for multiple employees. It provides login forwarding, credential storage, Session and Git synchronization, and status UI.
 
 See the [repository README](../../README.md) for the complete platform description.
 

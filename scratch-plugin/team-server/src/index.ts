@@ -168,7 +168,7 @@ export class TeamService extends Service implements TeamServiceApi {
     const generated = await summarizeDailyEvidence(user, workDate, evidence)
     const insight = { userId, workDate, evidence, ...generated, generatedAt: new Date().toISOString() }
     await this.database.saveDailyInsight(insight)
-    await this.audit({ level: 'info', event: 'daily-insight.generated', userId, model: generated.model, message: `Daily work insight generated for ${workDate}` })
+    await this.audit({ level: 'info', event: 'daily-insight.generated', userId, ...(generated.model === undefined ? {} : { model: generated.model }), message: `Daily work insight generated for ${workDate}` })
     return insight
   }
 
