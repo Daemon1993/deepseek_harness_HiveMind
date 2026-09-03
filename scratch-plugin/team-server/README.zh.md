@@ -46,6 +46,6 @@ Client 通过 `git log` 独立上传提交历史。Server 存储 hash、作者�
 
 `pnpm start:local` 和 `pnpm start:lan` 会同时启动 loopback Server 与限制路由的 LAN 代理。`pnpm start:loopback` 只启动监听 `127.0.0.1:3081` 的 Server。loopback launcher 会停止占用 3081 端口的现有源码启动 DSH Web 进程，拒绝停止无关的端口占用进程，并且绝不向 LAN 暴露通用 DSH Web listener。
 
-将 `TEAM_SERVER_LAN_HOST` 设置为 Server 机器持有的一个 IPv4 地址，并可选设置 `TEAM_SERVER_LAN_PORT`（默认 `3082`），然后运行 `pnpm start:local`。LAN listener 只接受 `/team` 和 `/team/*`，拒绝外部 Host/Origin 值及跨站浏览器请求，并把通过校验的流量转发到 `127.0.0.1:3081`。在 Windows 防火墙中放行配置的 LAN 端口；不要向局域网开放 3081 端口。
+将 `TEAM_SERVER_LAN_HOST` 设置为 Server 机器持有的一个 IPv4 地址，并可选设置 `TEAM_SERVER_LAN_PORT`（默认 `3082`），然后运行 `pnpm start:local`。LAN listener 只接受 `/team` 和 `/team/*`，拒绝外部 Host/Origin 值及跨站浏览器请求，并把通过校验的流量转发到 `127.0.0.1:3081`。员工侧 Client 把 `TEAM_SERVER_URL` 设为这个 LAN origin，不要直连 loopback 的 `127.0.0.1:3081`。在 Windows 防火墙中放行配置的 LAN 端口；不要向局域网开放 3081 端口。
 
 通过 `pnpm test` 运行聚焦回归测试。

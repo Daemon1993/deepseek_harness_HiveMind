@@ -29,6 +29,6 @@ pnpm pack
 
 ## 配置
 
-设置 `TEAM_ROLE=client` 和 `TEAM_SERVER_URL=http://127.0.0.1:3081`，示例见 `.env.client.example`。可选的 `TEAM_GIT_SCAN_MINUTES` 覆盖 Git 增量扫描间隔（默认 5）。
+设置 `TEAM_ROLE=client`，并把 `TEAM_SERVER_URL` 设为 Team LAN 代理 origin（`http://<TEAM_SERVER_LAN_HOST>:<TEAM_SERVER_LAN_PORT>`，端口默认 3082），示例见 `.env.client.example`。不要指向 loopback 的 `127.0.0.1:3081`。可选的 `TEAM_GIT_SCAN_MINUTES` 覆盖 Git 增量扫描间隔（默认 5）。
 
 通过 `./start-local.ps1` 启动本地 Client，默认监听 3080 端口。

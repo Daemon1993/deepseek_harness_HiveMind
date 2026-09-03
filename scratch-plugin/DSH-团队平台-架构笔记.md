@@ -25,7 +25,7 @@
 - ✅ SSO 免密进后台（30 秒一次性 ticket 桥接）
 - ✅ 模型网关（公司 token 换真 key、无缓冲流式转发）
 - ✅ Session 归档同步（字节增量 + md5 校验 + 全量回退 + 对账）
-- ✅ Git / 代码变更同步（Harness 工具与显式 watch 的仓库，commit_hash 幂等）
+- ✅ Git / 代码变更同步（导入仓库后 `git log` 游标扫描 + 周期增量，`(git_remote, commit_hash)` 幂等）
 - ✅ 管理后台（总览、用户、项目、Session、账号与同步状态）
 - ✅ 同步状态 UI（右下角胶囊，≥2s 动画 + 手动同步）
 - 📋 代码分析面板（Step 2）
@@ -73,7 +73,7 @@
 ④ turn 结束（session/flush）
    → 触发同步：拉 server 标记 → md5 比对 → 增量/全量 → server 校验 → 落盘 + 更新标记
 ⑤ commit 代码
-   → Harness 工具或本地 Git Hook 检测提交 → 上传 remote、subject、采集用户、时间与 diff stat
+   → client 周期 git log 扫描捕捉提交 → 上传 remote、subject、message、作者与增删统计
 ⑥ 管理员看后台
    → 按用户或 Git remote 并排查看 AI 使用、Git 提交与 Session，不推断提交归属
 ```
@@ -176,7 +176,7 @@ sequenceDiagram
 | **Server API**（机器，Bearer） | /team/api/login · /team/api/session | — / Bearer | 登录发 token · 水合 |
 | | /team/api/model/chat/completions | Bearer | 模型网关 |
 | | /team/api/sync/session · /sync/session/status · /sync/sessions | Bearer | 上传 / 拉标记 / 拉列表 |
-| | /team/api/git/ops · /git/changes | Bearer | Git / 变更上传 |
+| | /team/api/git/changes（·/git/ops 预留）| Bearer | 提交变更上传（ops 无客户端调用）|
 | | /team/api/admin-ticket · /team/admin/consume | Bearer / — | SSO code 换发与消费 |
 | **Server Admin**（Cookie） | /team/login · /session · /logout · /apply | — | 管理员登录态/申请 |
 | | /team/admin · /users · /sessions · /overview | admin | 后台页面与聚合接口 |
@@ -186,22 +186,23 @@ sequenceDiagram
 
 | 类别 | 名称 | 字段 / 说明 |
 |---|---|---|
-| **PG 表** | team_users | 账号：id/email/name/status/role/password |
+| **PG 表** | team_users | 账号：id/email/name/status/role/password_hash |
 | | team_session_log | 归属+标记：session_id/user_id/content_md5/file_size |
 | | team_audit_logs | 审计：level/event/source/user/session/details JSONB |
-| | team_git_ops | Git 操作流水：action/cwd/failed/user/session |
-| | team_code_changes | 代码变更：commit_hash UNIQUE（幂等键），含 remote、subject、采集用户、时间与增删统计 |
+| | team_git_ops | Git 操作流水（预留：当前无客户端上报，实际空转） |
+| | team_code_changes | 代码变更：(git_remote, commit_hash) 幂等键，含 remote、subject、message、作者、时间与增删统计 |
+| | team_projects · team_git_emails | 项目实体 / Git 邮箱↔平台用户绑定 |
 | | team_session_owners | 旧归属表（遗留） |
 | **Redis** | team:session:* | 管理员 Cookie（7 天滑动） |
 | | team:client-token:* | 本地 DSH Bearer（7 天固定） |
 | | team:admin-ticket:* | SSO 一次性 code（30 秒） |
 | **事件** | session/created · flush · disposed | 同步触发（flush=提交边界） |
-| | tools/post-execute | Git 抓取（水瀑，必须 next()） |
-| | credentials/reference-updated | 登录/登出 → 补传 |
+| | credentials/reference-updated | 登录/登出 → 会话补传 |
+| **轮询** | git log 游标扫描 | Git 提交同步（无 hook/工具事件，见 GIT_OUTSIDE_SYNC_DESIGN.md） |
 | **环境变量** | TEAM_ROLE · TEAM_SERVER_URL | 角色 / server 地址 |
 | | DB_URL · REDIS_URL | server 的 PG / Redis |
 | | TEAM_SESSIONS_ROOT | server 会话根（单机隔离） |
-| | DEEPSEEK_API_KEY | server 真密钥（只 server 内 resolve） |
+| | DEEPSEEK_API_KEY · TEAM_INSIGHT_API_KEY | server 真密钥（只 server 内 resolve） |
 
 ---
 
@@ -241,10 +242,18 @@ sequenceDiagram
 ### 6.4 Git / 代码变更同步
 
 ```
-监听 tools/post-execute → 检测 bash + git → commit 成功 → rev-parse + diff-tree --shortstat → 上传
+导入仓库目录 → git rev-parse 校验 → 全量 git log 抽取 → 记 syncedTips 游标
+之后周期/启动扫描 git log 增量 → 批量(100/批)上报 /team/api/git/changes
+server 以 (git_remote, commit_hash) 幂等去重
 ```
 
-**细节**：水瀑必须调用 `next()`；只上传提交元数据；commit_hash UNIQUE 幂等；Harness 工具能够提供 `sessionId` 时可选保存，但分析不使用它归因。
+**细节**：数据源唯一是 `git log`（无 hook、无工具事件监听，零仓库侵入）；游标存
+`<dataDir>/team-client/watched.json`，重启续扫不整仓重传；只上传提交元数据
+（hash/作者/主题/message/变更文件/增删统计），不含 diff 内容。分析按作者邮箱经
+`team_git_emails` 绑定归属平台用户，从不把提交归因到某个 Session。要捕捉 DSH 对话框
+内的命令级 git 行为（action、实时）可未来补挂 `tools/post-execute` 水瀑（必须 `next()`）
+上报 `/team/api/git/ops`——当前未实现，`team_git_ops` 表空转。方案取舍见
+`GIT_OUTSIDE_SYNC_DESIGN.md`。
 
 ---
 
@@ -263,7 +272,7 @@ sequenceDiagram
 | 跨边界凭证 | 30 秒一次性 code | 不用 token 直传：泄露窗口 7 天 vs 30 秒 | 多一跳往返 |
 | 一致性 | 写路径尽力 + 对账 | 不用事务强一致：文件系统 + DB 无法原子 | 短暂漂移可接受 |
 | 并发控制 | 每会话单飞锁 | 不用消息队列：单一写入者，锁就够 | 最坏 409 → 全量 |
-| 密码存储 | scrypt（计划中） | 当前明文是 MVP 取舍 | 后置，识别了风险 |
+| 密码存储 | scrypt（已实现：自描述格式 + 常量时间比较 + 明文自动迁移） | 不用明文/MD5：易被离线爆破 | 需启动迁移旧行 |
 | 真密钥 | server 内 resolve | 不用下发给员工机器 | 网关是唯一出口 |
 
 ---
@@ -394,14 +403,14 @@ A: Redis 会话可服务端撤销、可滑动续期、O(1) 校验；JWT 无状�
 A: 提交边界触发（低频）+ 每批 O(增量) + 每会话单飞锁；server 每批 = Redis 鉴权 + 两次 PG + 追加写盘。早期"每次全量解码"有 O(n²) 问题，改游标缓存后消除。
 
 **Q: 已知的取舍/风险？**
-A: 密码明文、token 未哈希、禁用不即时生效——都识别了，按 MVP 后置。演进方向：scrypt、token sha256、网关校验 status、双 token（受官方适配器 401 重试限制）。
+A: 密码已 scrypt 哈希（见 `passwords.ts`，非明文）。当前取舍：Redis token 未哈希（原始 token 作 key）、禁用/删除账号不即时生效（7 天 TTL 内 token 仍可用）、传输为 LAN 明文 HTTP。演进方向：token sha256、网关校验 status/role、登录限流、双 token（受官方适配器 401 重试限制）。
 
 ---
 
 ## 13 · 未来路线
 
 - 📋 **代码分析面板**：项目/用户/趋势统计 + 会话↔提交关联（Step 2）
-- 🔒 **安全加固**：scrypt 密码哈希 · token sha256 · 禁用即时生效 · 登录限流
+- 🔒 **安全加固**：~~scrypt 密码哈希~~（已完成）· token sha256 · 禁用/降权即时生效 · 登录限流 · admin 端点权限收紧
 - 🔒 **Access/Refresh 双 token**：30min + 7d + 轮换
 - 🔒 **多设备管理**：deviceId + 设备列表/远程撤销
 - 🚀 **diff 内容分析**：经验沉淀、代码审查、项目记忆

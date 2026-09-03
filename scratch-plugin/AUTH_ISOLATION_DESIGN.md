@@ -62,11 +62,12 @@
 - **为什么不用 JWT**：Redis 会话可服务端撤销、可滑动续期、O(1) 校验；JWT 无状态但撤销要黑名单
 - **隔离在哪几层**：存储（约束）→ 查询（过滤）→ 接口（鉴权）三层
 - **为什么不用加盐 md5**：内容指纹非秘密，盐是密码哈希概念，加盐会破坏对账（详见 SYNC_DESIGN.md）
-- **已知取舍**（诚实）：明文密码、token 未哈希存储、禁用账号不即时生效——识别了风险，按 MVP 优先级后置，演进方向明确（scrypt 哈希、token 哈希、状态即时校验）
+- **已知取舍**（诚实）：token 未哈希存储、禁用账号不即时生效——识别了风险，按 MVP 优先级后置，演进方向明确（token 哈希、状态即时校验）。
+  密码已用 scrypt 哈希存储（自描述格式 `scrypt$v=1$N$r$p$salt$hash` + 常量时间比较，见 `passwords.ts`）；启动时会自动把旧明文/旧列迁移为哈希（见 `index.ts`、`database.ts` 的 `password → password_hash` 改名），因此"明文密码"已不再是当前取舍。
 
 ## 7. 演进方向（后置清单）
 
-- 密码 scrypt 哈希（当前明文）
+- ~~密码 scrypt 哈希~~（已完成：见 `passwords.ts`）
 - Redis token 哈希存储（当前原始 token 作 key）
 - 账号禁用即时生效（网关/同步处校验 status）
 - Access/Refresh 双 token + 轮换（受官方适配器 401 重试限制，需动 packages/）

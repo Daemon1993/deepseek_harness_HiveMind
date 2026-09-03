@@ -10,7 +10,7 @@ HiveMind 是两个 Cordis 插件包（`dsh-team-server` + `dsh-team-client`）�
 
 | 扩展点 | 用途 |
 |---|---|
-| `webServer.register / tapIndex / registerFallback` | 挂载路由、注入登录守卫、接管根路径重定向 |
+| `webServer.register / tapIndex` | 挂载路由、向页面注入登录守卫（可见性门控 + 根路径跳转） |
 | `cordis.patch.yml`（`!!js` 配置分叉） | 替换 `llm-deepseek` 的 `baseURL` + `apiKeyEnv`，模型流量搬到网关 |
 | `session/flush` · `created` · `disposed` | 触发会话增量同步（DSH 持久化提交边界） |
 | `credentials` 服务 | Host 托管公司 token（永不进浏览器） |
@@ -60,10 +60,10 @@ HiveMind 是两个 Cordis 插件包（`dsh-team-server` + `dsh-team-client`）�
 ```
 
 - **模型由 client 决定**：请求体带 `model` 字段，网关原样透传不覆盖——两边都是 DSH，模型名一致
-- **files-first**：client 优先走 Files API（与本地直连行为一致），上传失败自动降级 base64 内联
-- 网关日志/审计带 `model` 字段，每次请求可追溯用了哪个模型
-- 流式响应嗅探 `usage`，按静态模型价目写入 `team_model_usage`，后台展示 Token 与估算成本
-- 一个真 key = 一个共享文件空间：同内容图片天然去重复用
+- **files-first**：client 优先走 Files API（与本地直连行为一致）。网关必须完整代理 `/files`，否则 client 会退化为 base64 内联（`routes.ts` 对 chat 与 files 都做了无缓冲透传）
+- 网关日志/审计带 `model` 字段，每次请求可追溯用了哪个模型；网关本身不透传/提取 usage
+- 真 key 只在 server 进程内 resolve（`credentials.resolve`），员工机与浏览器均不持有；不向 LAN 暴露 loopback 网关端口
+- Token / 模型用量在会话归档后由 Session 事件流聚合得到，用于后台展示；成本估算与价目表尚在规划中，未实现
 
 ### 3. 会话同步归档（md5 字节增量）
 
@@ -95,15 +95,15 @@ session/flush（主）· created · disposed · 挂载补传
 
 | 栏目 | 内容 |
 |---|---|
-| 总览 | 团队总览、AI 用量（网关成本）、Agent 会话、Git 同步日志 |
-| 用户 | 成员列表；详情含模型/工具、提交类型、按项目分组的提交 |
+| 总览 | 团队总览、AI/Agent 用量（Token 聚合）、Git 同步日志 |
+| 用户 | 成员列表；详情含模型/工具用量、提交类型、按项目分组的提交 |
 | 项目 | 按 Git remote 聚合；详情含提交趋势、作者分布、热目录、提交类型 |
-| 账号与权限 | 账号审核、Git 邮箱映射、Session 同步状态与对账 |
+| 账号与权限 | 账号审核、Git 邮箱映射、Session 同步状态与对账、每日工作洞察 |
 
 ### 6. 工作台访问控制
 
-- 根路径 `/` 由 server 端重定向：已登录 → 后台，未登录 → 登录页（工作台不再直接可达）
-- 工作台仅在 `/team/workspace`，且只允许 admin 角色（双保险：server 重定向 + 页面守卫脚本）
+- server 通过 `tapIndex` 向页面注入守卫脚本：`/team/session` 未通过 admin 认证时页面保持隐藏并跳转 `/team/admin`（非真实路由重定向）
+- `/team/workspace` 仅供 admin：用团队会话换取本机 DSH 浏览器令牌进入工作台（双保险：服务端校验 + 页面守卫脚本）
 
 ## 快速开始
 
@@ -150,7 +150,7 @@ DEEPSEEK_API_KEY=sk-xxxx
 
 ```env
 TEAM_ROLE=client
-TEAM_SERVER_URL=http://127.0.0.1:3081
+TEAM_SERVER_URL=http://192.168.1.10:3082
 # 可选：Git 增量扫描间隔（分钟），默认 5
 # TEAM_GIT_SCAN_MINUTES=5
 ```
@@ -160,15 +160,15 @@ TEAM_SERVER_URL=http://127.0.0.1:3081
 ### 启动
 
 ```powershell
-# 服务器（3081）
+# 服务器（loopback 3081 + LAN 代理 3082；员工机连 3082）
 cd scratch-plugin/team-server
-./start-local.ps1
+pnpm start:local
 
-# 员工机（3080）
+# 员工机（3080，TEAM_SERVER_URL 指向 LAN 3082）
 cd scratch-plugin/team-client
 ./start-local.ps1
 ```
 
-### 默认账号
+### 账号
 
-`team-server/src/users.json` 播种：`hahame/a123456`（admin）、`liu/123456`、`zhang/123456`（developer）。
+账号由 `team-server/src/users.json` 播种（含一个 admin 与若干 developer），并在首次启动时落库。代码不预设密码——账号以"未设密码"哨兵落库，需先在管理后台为账号分配密码后才能登录。账号清单与角色请以该文件为准。

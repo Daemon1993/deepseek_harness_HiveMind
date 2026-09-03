@@ -29,6 +29,6 @@ Install the employee bundle with `dsh plugin --profile web add <tarball>`.
 
 ## Configuration
 
-Set `TEAM_ROLE=client` and `TEAM_SERVER_URL=http://127.0.0.1:3081`; see `.env.client.example`. Optional `TEAM_GIT_SCAN_MINUTES` overrides the incremental Git scan interval (default 5).
+Set `TEAM_ROLE=client` and `TEAM_SERVER_URL` to the Team LAN proxy origin (`http://<TEAM_SERVER_LAN_HOST>:<TEAM_SERVER_LAN_PORT>`, default port 3082); see `.env.client.example`. Do not point it at loopback `127.0.0.1:3081`. Optional `TEAM_GIT_SCAN_MINUTES` overrides the incremental Git scan interval (default 5).
 
 Start the local Client with `./start-local.ps1`; it listens on port 3080 by default.

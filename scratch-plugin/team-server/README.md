@@ -46,6 +46,6 @@ The Client uploads commit history independently through `git log`. The Server st
 
 `pnpm start:local` and `pnpm start:lan` start both the loopback Server and the route-restricted LAN proxy. `pnpm start:loopback` starts only the Server on `127.0.0.1:3081`. The loopback launcher stops an existing source-launched DSH Web process on port 3081, refuses to stop an unrelated port owner, and never exposes the general DSH Web listener to the LAN.
 
-Set `TEAM_SERVER_LAN_HOST` to one IPv4 address owned by the Server machine and optionally set `TEAM_SERVER_LAN_PORT` (default `3082`), then run `pnpm start:local`. The LAN listener accepts only `/team` and `/team/*`, rejects foreign Host/Origin values and cross-site browser requests, and forwards accepted traffic to `127.0.0.1:3081`. Allow the configured LAN port through Windows Firewall; keep port 3081 closed to the LAN.
+Set `TEAM_SERVER_LAN_HOST` to one IPv4 address owned by the Server machine and optionally set `TEAM_SERVER_LAN_PORT` (default `3082`), then run `pnpm start:local`. The LAN listener accepts only `/team` and `/team/*`, rejects foreign Host/Origin values and cross-site browser requests, and forwards accepted traffic to `127.0.0.1:3081`. Employee Clients set `TEAM_SERVER_URL` to this LAN origin; they must not call loopback `127.0.0.1:3081`. Allow the configured LAN port through Windows Firewall; keep port 3081 closed to the LAN.
 
 Run the focused regression tests with `pnpm test`.
