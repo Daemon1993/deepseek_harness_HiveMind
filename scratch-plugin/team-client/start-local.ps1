@@ -2,7 +2,19 @@ $ErrorActionPreference = 'Stop'
 $pluginRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = Resolve-Path (Join-Path $pluginRoot '../..')
 
-Get-Content -Encoding UTF8 (Join-Path $pluginRoot '.env.client') | ForEach-Object {
+$envClient = Join-Path $pluginRoot '.env.client'
+if (-not (Test-Path -LiteralPath $envClient)) {
+  $example = Join-Path $pluginRoot '.env.client.example'
+  throw @"
+Missing $envClient
+
+.gitignore excludes .env.client, so a rebase/checkout that removes scratch-plugin/ also deletes it.
+Copy the example and set TEAM_SERVER_URL to the LAN proxy (port 3082), for example:
+  Copy-Item '$example' '$envClient'
+"@
+}
+
+Get-Content -Encoding UTF8 -LiteralPath $envClient | ForEach-Object {
   if ($_ -match '^([A-Z][A-Z0-9_]*)=(.*)$') {
     [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
   }
