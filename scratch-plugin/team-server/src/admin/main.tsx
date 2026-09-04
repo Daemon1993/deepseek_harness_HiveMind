@@ -9,7 +9,7 @@ type User = { id: string; email?: string; name: string; status: Status; role: Ro
 type DailyInsight = { userId: string; workDate: string; generatedAt: string; model?: string; evidence: { sessions: { title: string; projectName?: string; lastActiveAt?: string; toolCalls: number; errors: number }[]; commits: { subject?: string; project?: string; files: number; insertions: number; deletions: number }[] }; insight: { summary: string; completed: string[]; inProgress: string[]; blockers: string[]; topics: string[] } }
 type SessionOwner = { sessionId: string; userId: string; userName: string; email?: string; createdAt: string; lastActiveAt: string; title?: string; projectName?: string; gitRemote?: string; updatedAt?: number; blank?: boolean }
 type Phase = 'checking' | 'ready'
-type Section = 'dashboard' | 'users' | 'projects' | 'accounts' | 'capabilities' | 'workbench'
+type Section = 'dashboard' | 'users' | 'projects' | 'accounts' | 'capabilities'
 
 // ── 总览类型（/team/admin/overview）──────────────────────────
 type OverviewSummary = {
@@ -212,16 +212,6 @@ function AdminRoot() {
   }
   useEffect(() => { void checkSession() }, [])
   useEffect(() => { if (section === 'dashboard' && canEdit) void loadSessions() }, [section, canEdit])
-  useEffect(() => {
-    if (section !== 'workbench') return
-    if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
-      window.location.assign('/team/workspace')
-      return
-    } else {
-      void toast.warning('DSH 工作台只能在 Server 本机的管理后台中打开')
-    }
-    setSection('dashboard')
-  }, [section, toast])
 
   const logout = async (): Promise<void> => { await fetch('/team/logout', { method: 'POST' }); window.location.replace('/team/login-page') }
   const save = async (id: string, patch: Partial<User> = {}): Promise<void> => {
@@ -259,8 +249,6 @@ function AdminRoot() {
       ? { title: '项目', description: '按 Git 项目查看提交趋势、作者分布与 AI 使用' }
       : section === 'accounts'
         ? { title: '账号与权限', description: '账号申请审核、角色权限、Git 邮箱映射与同步状态' }
-        : section === 'workbench'
-          ? { title: 'DSH 工作台', description: '仅管理员可在 Server 本机打开完整 DSH 工作台' }
         : { title: '平台能力', description: '当前数据范围、AI 洞察能力与后续建设方向' }
   const menuItems = [
     { key: 'dashboard' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-blue" />总览</span> },
@@ -268,7 +256,6 @@ function AdminRoot() {
     { key: 'projects' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-green" />项目</span> },
     { key: 'accounts' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-orange" />账号与权限</span> },
     { key: 'capabilities' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-blue" />平台能力</span> },
-    { key: 'workbench' as Section, label: <span className="aiMenuLabel"><i className="aiDot dot-green" />DSH 工作台</span> },
   ]
   return <><Layout className="page">{contextHolder}<Layout.Sider width={252} theme="dark" className="adminSider"><div className="brand"><div className="brandMark">H</div><div><Typography.Text strong className="aiBrandName">HiveMind</Typography.Text><Typography.Text className="blockText brandCaption">团队 AI 工作台</Typography.Text></div></div><div className="menuCaption">工作台</div><Menu theme="dark" mode="inline" selectedKeys={[section]} onSelect={({ key }) => { setSection(key as Section); document.getElementById('admin-main-scroll')?.scrollTo({ top: 0 }) }} items={canEdit ? menuItems : [menuItems[3]!]} /><div className="siderUser"><Avatar className="aiAvatar">{currentUser?.name.slice(0, 1)}</Avatar><div className="siderUserCopy"><Typography.Text strong>{currentUser?.name}</Typography.Text><Typography.Text className="blockText">{roleOptions.find(item => item.value === currentUser?.role)?.label}</Typography.Text></div><span className="onlineDot" title="服务在线" /></div></Layout.Sider><Layout id="admin-main-scroll" className="mainLayout"><Layout.Header className="topbar"><div><Typography.Text className="eyebrow">HIVEMIND CONTROL CENTER</Typography.Text><Typography.Title level={3}>{sectionCopy.title}</Typography.Title><Typography.Text type="secondary">{sectionCopy.description}</Typography.Text></div><Space className="topbarActions"><span className="environmentBadge"><i />Server 在线</span><Button onClick={() => void logout()}>退出登录</Button></Space></Layout.Header><Layout.Content className="content">{section === 'dashboard' ? <DashboardSection sessions={sessions} loading={loading} onOpenSession={setDetail} /> : section === 'users' ? <UserDataPanel onOpenSession={setDetail} /> : section === 'projects' ? <ProjectDataPanel onOpenSession={setDetail} /> : section === 'capabilities' ? <CapabilitiesPanel /> : <><AccountsPanel users={users} loading={loading} columns={columns} />{canEdit && <GitEmailsPanel />}{canEdit && <SyncStatusPanel />}</>}</Layout.Content></Layout></Layout><SessionDetailDrawer detail={detail} onClose={() => setDetail(undefined)} /></>
 }

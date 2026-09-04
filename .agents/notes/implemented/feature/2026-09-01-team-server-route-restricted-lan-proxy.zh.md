@@ -10,7 +10,7 @@ English | [中文](2026-09-01-team-server-route-restricted-lan-proxy.md)
 
 ## Decision
 
-本地 Team Server 继续绑定 `127.0.0.1:3081`。`pnpm start:local` 及其 `start:lan` 别名会在配置的 `TEAM_SERVER_LAN_HOST` 和 `TEAM_SERVER_LAN_PORT` 上启动独立 listener；`start:loopback` 会刻意省略该 listener。代理只接受 `/team` 和 `/team/*`，要求使用配置的 Host authority，拒绝外部 Origin 值与跨站浏览器请求，移除 hop-by-hop header，并把通过校验的 HTTP 流量流式转发到 loopback Server。WebSocket upgrade 和所有非 Team 路由都会被拒绝。
+本地 Team Server 继续绑定 `127.0.0.1:3081`。`pnpm start:local` 会在配置的 `TEAM_SERVER_LAN_HOST` 和 `TEAM_SERVER_LAN_PORT` 上启动独立 listener；`start:loopback` 会刻意省略该 listener。代理只接受 `/team` 和 `/team/*`，要求使用配置的 Host authority，拒绝外部 Origin 值与跨站浏览器请求，移除 hop-by-hop header，并把通过校验的 HTTP 流量流式转发到 loopback Server。WebSocket upgrade 和所有非 Team 路由都会被拒绝。
 
 launcher 持有代理进程，与前台 Team Server 共享 stdout 和 stderr，并在该 Server 退出时停止代理。代理访问记录只包含 method、pathname、status 与 duration，不记录 query string、header 或 body。启动前，它会替换配置端口上的既有 Team LAN 代理，本地 Server 脚本也会替换 3081 端口上的源码启动 DSH Web 进程；两个 launcher 都拒绝终止无关的端口占用进程。Portable Client 使用 LAN 代理 origin 作为 `TEAM_SERVER_URL`；Windows 防火墙只开放代理端口。
 

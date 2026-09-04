@@ -1254,25 +1254,23 @@ async function handleLoginScript(_req: IncomingMessage, res: ServerResponse): Pr
   res.end(await loginScript)
 }
 
-/** Admin console guard injected into the Server DSH index.html: by default the
- * workspace homepage redirects (authenticated → /team/admin, else → login).
- * A URL with ?workspace=1 (the admin console's "打开工作台" entry) bypasses
- * the guard so the operator can stay in the DSH workspace for model testing. */
-const adminAuthBootstrap = `<style id="team-auth-guard">html{visibility:hidden}</style><script>(async()=>{
-try{var r=await fetch('/team/session',{credentials:'same-origin',cache:'no-store'});var d=await r.json();if(r.ok&&d.authenticated===true&&d.user&&d.user.role==='admin'){document.documentElement.style.visibility='visible';document.getElementById('team-auth-guard').remove();return}}catch(e){}
-location.replace('/team/admin')
-})()</script>`
+/** Admin console guard injected into the Server DSH index.html. The Server hosts
+ * the team platform only, so its DSH workspace UI is never a destination: the
+ * root route redirects before this markup is reached, and this guard covers the
+ * remaining way index.html can be served (a direct /index.html request from a
+ * browser holding a DSH cookie). */
+const adminAuthBootstrap = `<style id="team-auth-guard">html{visibility:hidden}</style><script>location.replace('/team/admin')</script>`
 
 function injectAdminAuthGuard(html: string): string {
   return html.replace(/<\/head>/i, `${adminAuthBootstrap}</head>`)
 }
 
 /**
- * Exchange an administrator's team session for the local DSH browser token.
- * The redirect is intentionally issued only by the loopback Server process;
- * the LAN proxy exposes no `/team/workspace` route.
+ * Root entry: the Server is the team platform's console, not a DSH workspace.
+ * Owning `/` as a team route also keeps the console reachable at the bare
+ * origin, because DSH's own launch-token check guards only the index it serves.
  */
-async function handleWorkspaceEntry(
+async function handleRootEntry(
   ctx: TeamContext,
   sessions: AuthSessions,
   req: IncomingMessage,
@@ -1282,13 +1280,11 @@ async function handleWorkspaceEntry(
     sendJson(res, 405, { message: '只支持 GET 请求' })
     return
   }
-  if ((await authenticatedUser(ctx, sessions, req))?.role !== 'admin') {
-    res.writeHead(303, { location: '/team/admin' })
-    res.end()
-    return
-  }
-  const target = new URL(ctx.connection.authenticatedUrl(`http://127.0.0.1:${String(ctx.webServer.port)}`))
-  res.writeHead(303, { 'cache-control': 'no-store', location: `${target.pathname}${target.search}` })
+  const authenticated = await authenticatedUser(ctx, sessions, req) !== undefined
+  res.writeHead(302, {
+    'cache-control': 'no-store',
+    location: authenticated ? '/team/admin' : '/team/login-page',
+  })
   res.end()
 }
 
@@ -1465,7 +1461,7 @@ export async function registerTeamRoutes(ctx: TeamContext): Promise<() => Promis
   ctx.webServer.register({ kind: 'exact', path: '/team/admin.js', handler: handleAdminScript }),
   ctx.webServer.register({ kind: 'exact', path: '/team/login-page', handler: handleLoginPage }),
   ctx.webServer.register({ kind: 'exact', path: '/team/login.js', handler: handleLoginScript }),
-  ctx.webServer.register({ kind: 'exact', path: '/team/workspace', handler: (req, res) => handleWorkspaceEntry(ctx, sessions, req, res) }),
+  ctx.webServer.register({ kind: 'exact', path: '/', handler: (req, res) => handleRootEntry(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/enter', handler: (req, res) => handleEnter(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/users', handler: (req, res) => handleAdminUsers(ctx, sessions, req, res) }),
   ctx.webServer.register({ kind: 'exact', path: '/team/admin/daily-insight', handler: (req, res) => handleAdminDailyInsight(ctx, sessions, req, res) }),

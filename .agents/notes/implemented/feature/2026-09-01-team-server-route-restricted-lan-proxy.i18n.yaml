@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-01-team-server-route-restricted-lan-proxy.md
-2026-09-01-team-server-route-restricted-lan-proxy.md: c370f64e170554fb37f7f6b72370e84b6dca7d44
-2026-09-01-team-server-route-restricted-lan-proxy.zh.md: 354cc7c5b6f51f7bf5a2e47286b9e5d544935d4c
+2026-09-01-team-server-route-restricted-lan-proxy.md: 0464c5c5d39e1152b3ea8f9e8d32514a8db4a6f1
+2026-09-01-team-server-route-restricted-lan-proxy.zh.md: d46b11a87440b1114eedd0391eae69a064ce0308
