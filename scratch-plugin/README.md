@@ -8,3 +8,11 @@
 
 - `team-server/README.md`：认证、模型网关、Session 副本、Git 入库、管理后台
 - `team-client/README.md`：登录转发、Session 同步、Git 导入与周期扫描
+
+员工侧工作台：
+
+![员工侧 DSH 工作台](team-client/preview.png)
+
+服务器管理后台：
+
+![HiveMind 管理后台总览](team-server/preview.png)

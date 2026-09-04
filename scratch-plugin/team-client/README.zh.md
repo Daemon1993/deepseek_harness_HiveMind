@@ -6,6 +6,8 @@
 
 完整说明见[仓库 README](../../README.zh.md)。
 
+![员工侧 DSH 工作台](preview.png)
+
 ## 职责
 
 - 登录：`/team/login` 转发到 Server；Host 拦截 token 并存入 credentials，token 不进入浏览器。

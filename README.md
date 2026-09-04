@@ -26,6 +26,16 @@ HiveMind 是两个 Cordis 插件包（`dsh-team-server` + `dsh-team-client`）�
 
 > 两个插件包：`dsh-team-server`（服务器侧）+ `dsh-team-client`（员工侧）。同一份 DSH 应用，靠环境变量分叉角色。
 
+### 效果截图
+
+员工侧工作台（`team-client`，默认 3080）：
+
+![员工侧 DSH 工作台](scratch-plugin/team-client/preview.png)
+
+服务器管理后台（`team-server`，`/team/admin`）：
+
+![HiveMind 管理后台总览](scratch-plugin/team-server/preview.png)
+
 ## 架构总览
 
 ```

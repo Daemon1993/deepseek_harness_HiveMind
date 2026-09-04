@@ -6,6 +6,8 @@ The Server plugin for HiveMind, a team AI workbench for multiple employees: unif
 
 See the [repository README](../../README.md) for the complete platform description.
 
+![HiveMind administration console overview](preview.png)
+
 ## Responsibilities
 
 - Authentication: PostgreSQL accounts plus Redis-backed Cookie, Bearer, and SSO-ticket sessions

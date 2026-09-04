@@ -6,6 +6,8 @@ The employee-side plugin for HiveMind, a team AI workbench for multiple employee
 
 See the [repository README](../../README.md) for the complete platform description.
 
+![Employee DSH workspace with team-client](preview.png)
+
 ## Responsibilities
 
 - Login: `/team/login` forwards to the Server; the Host intercepts the token and stores it in credentials, so it never enters the browser.

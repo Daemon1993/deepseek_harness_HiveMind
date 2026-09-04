@@ -6,6 +6,8 @@
 
 完整平台说明见[仓库 README](../../README.zh.md)。
 
+![HiveMind 管理后台总览](preview.png)
+
 ## 职责
 
 - 认证：PostgreSQL 账号以及 Redis 支持的 Cookie、Bearer 与 SSO ticket 会话
