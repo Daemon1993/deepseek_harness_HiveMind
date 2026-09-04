@@ -26,9 +26,10 @@
     "build:web": "tsdown --config tsdown.admin.config.ts && tsdown --config tsdown.login.config.ts",
     "build": "pnpm run build:host && pnpm run build:web",
     "test": "vitest run",
-    "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start-lan.ps1",
     "start:lan": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start-lan.ps1",
+    "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start-local.ps1",
     "start:loopback": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start-local.ps1",
+    "start:server": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start-lan.ps1",
     "pack:plugin": "pnpm run build && pnpm pack"
   },
   "dependencies": {
